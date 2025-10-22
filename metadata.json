@@ -1,0 +1,5 @@
+{
+  "name": "Pixel Tank Arena",
+  "description": "An advanced and aggressive pixel tank arena game where players choose a country and fight against waves of enemies, aiming for the high score on the leaderboard.",
+  "requestFramePermissions": []
+}
