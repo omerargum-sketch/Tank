@@ -1,8 +1,7 @@
 
+
 import type { Country } from './types';
 
-export const CANVAS_WIDTH = 960;
-export const CANVAS_HEIGHT = 600;
 export const FPS = 60;
 export const MS_PER_FRAME = 1000 / FPS;
 

@@ -1,10 +1,18 @@
 import React, { useRef, useEffect } from 'react';
-import type { GameState, Tank, Bullet, Explosion, PowerUp, MuzzleFlash, SmokeParticle, ExperienceOrb, KamikazeDrone, Mine, TireTrackPoint, GameEntity, Particle, FloatingText, WeatherState, ArtilleryTarget, MartyrsBeacon } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../constants';
+import type { GameState, Tank, Bullet, Explosion, PowerUp, MuzzleFlash, SmokeParticle, ExperienceOrb, KamikazeDrone, Mine, TireTrackPoint, GameEntity, Particle, FloatingText, WeatherState, ArtilleryTarget, MartyrsBeacon, SolarFlareWarning, BlackHole, ScorchMark, EMPBlast, Asteroid, SpaceDebris, Building, Rubble } from '../types';
 
 interface GameCanvasProps {
-    gameState: GameState;
+    gameStateRef: React.RefObject<GameState>;
+    width: number;
+    height: number;
 }
+
+const hexToRgba = (hex: string, alpha: number): string => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
 
 const flagRenderers: Record<string, (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) => void> = {
     US: (ctx, x, y, w, h) => {
@@ -443,53 +451,87 @@ const flagRenderers: Record<string, (ctx: CanvasRenderingContext2D, x: number, y
 };
 
 const drawTank = (ctx: CanvasRenderingContext2D, tank: Tank, target: GameEntity | null) => {
-    const { x, y, width, height, design, health, maxHealth, country, isInvincible, damageFlashTimer, spawnAnimProgress, isAlly, isBoss, variant } = tank;
+    const { x, y, width, height, design, health, maxHealth, country, isInvincible, damageFlashTimer, spawnAnimProgress, isAlly, isBoss, variant, motionBlurTrail, isStunned, isAdrenalineActive } = tank;
     const { base, turret, shadow, highlight, track } = design;
-    const scale = isBoss ? 1.8 : 1;
+    const scale = isBoss ? 1.8 : (variant === 'swarmer' ? 0.6 : 1);
 
     ctx.save();
 
     const isSpawning = spawnAnimProgress < 1;
-    const animScale = isSpawning ? 0.5 + spawnAnimProgress * 0.5 : 1;
+    const animScale = isSpawning ? 0.1 + spawnAnimProgress * 0.9 : 1;
     
-    const rumbleX = (Math.random() - 0.5) * 0.5 * (isBoss ? 2 : 1);
-    const rumbleY = (Math.random() - 0.5) * 0.5 * (isBoss ? 2 : 1);
-    ctx.translate(x + (width*scale) / 2 + rumbleX, y + (height*scale) / 2 + rumbleY);
+    ctx.translate(x + (width*scale) / 2, y + (height*scale) / 2);
+
+    // Adrenaline Rush Aura
+    if (isAdrenalineActive) {
+        const time = Date.now();
+        const auraRadius = (width * scale / 2) + 10 + Math.sin(time / 100) * 3;
+        const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, auraRadius);
+        gradient.addColorStop(0, 'rgba(255, 100, 0, 0.8)');
+        gradient.addColorStop(0.7, 'rgba(255, 140, 0, 0.4)');
+        gradient.addColorStop(1, 'rgba(255, 200, 0, 0)');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(0, 0, auraRadius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    
     ctx.scale(animScale, animScale);
     if(isSpawning) ctx.globalAlpha = spawnAnimProgress;
     
     let angle = 0;
-// FIX: Add a type guard to ensure target has width and height before accessing them. This handles cases like ArtilleryTarget.
     if (target) {
-        if ('width' in target && 'height' in target) {
-            angle = Math.atan2(target.y + target.height / 2 - (y + (height*scale) / 2), target.x + target.width / 2 - (x + (width*scale) / 2));
-        } else {
-            angle = Math.atan2(target.y - (y + (height*scale) / 2), target.x - (x + (width*scale) / 2));
-        }
+        const targetX = target.x + (target.width || 0) / 2;
+        const targetY = target.y + (target.height || 0) / 2;
+        angle = Math.atan2(targetY - (y + (height*scale) / 2), targetX - (x + (width*scale) / 2));
     }
     
-    // Tracks
-    ctx.fillStyle = track;
-    ctx.fillRect(-width/2*scale, -height/2*scale - (4*scale), width*scale, height*scale + (8*scale));
-    ctx.fillStyle = '#111';
-    const numTreads = isBoss ? 10 : 6;
-    for (let i = 0; i < numTreads; i++) {
-        ctx.fillRect(-width/2*scale + (i * (width*scale/(numTreads-0.5))), -height/2*scale - (4*scale), 2*scale, height*scale + (8*scale));
+    // Motion Blur Trail for Overdrive
+    if (motionBlurTrail && motionBlurTrail.length > 0) {
+        motionBlurTrail.forEach(trail => {
+            ctx.globalAlpha = trail.life * 0.3;
+            ctx.fillStyle = base;
+            ctx.translate(trail.x - (x + width*scale/2), trail.y - (y + height*scale/2));
+            ctx.fillRect(-width/2*scale, -height/2*scale, width*scale, height*scale);
+            ctx.translate(-(trail.x - (x + width*scale/2)), -(trail.y - (y + height*scale/2)));
+        });
+        ctx.globalAlpha = isSpawning ? spawnAnimProgress : 1.0;
     }
 
+    // Tracks
+    const treadWidth = width * scale;
+    const treadHeight = height * scale + 8 * scale;
+    ctx.fillStyle = track;
+    ctx.fillRect(-treadWidth / 2, -treadHeight / 2, treadWidth, treadHeight);
+    
     // Body
     ctx.fillStyle = shadow;
-    ctx.fillRect(-width/2*scale, -height/2*scale, width*scale, height*scale);
+    ctx.fillRect(-width/2*scale + 2, -height/2*scale + 2, width*scale, height*scale);
     ctx.fillStyle = base;
-    ctx.fillRect(-width/2*scale, -height/2*scale, width*scale, height*scale - (2*scale));
+    ctx.beginPath();
+    ctx.moveTo(-width/2*scale, -height/2*scale);
+    ctx.lineTo(width/2*scale - 5, -height/2*scale);
+    ctx.lineTo(width/2*scale, -height/2*scale + 5);
+    ctx.lineTo(width/2*scale, height/2*scale);
+    ctx.lineTo(-width/2*scale, height/2*scale);
+    ctx.closePath();
+    ctx.fill();
     ctx.fillStyle = highlight;
-    ctx.fillRect(-width/2*scale + (2*scale), -height/2*scale + (2*scale), width*scale - (4*scale), (2*scale));
+    ctx.fillRect(-width/2*scale, -height/2*scale, width*scale, 4*scale);
+
+    // Antenna detail
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2 * scale;
+    ctx.beginPath();
+    ctx.moveTo(-width/2 * scale * 0.8, -height/2 * scale * 0.8);
+    ctx.lineTo(-width/2 * scale * 1.2, -height/2 * scale * 1.2);
+    ctx.stroke();
 
     // Ally Indicator
     if(isAlly) {
         ctx.strokeStyle = '#3498db';
         ctx.lineWidth = 4;
-        ctx.strokeRect(-width/2*scale, -height/2*scale, width*scale, height*scale);
+        ctx.strokeRect(-width/2*scale - 4, -height/2*scale - 4, width*scale + 8, height*scale + 8);
     }
 
     // Turret and Barrel
@@ -497,28 +539,34 @@ const drawTank = (ctx: CanvasRenderingContext2D, tank: Tank, target: GameEntity 
     ctx.rotate(angle);
     const turretWidth = width * (variant === 'artillery' ? 0.8 : 0.6) * scale;
     const turretHeight = height * (variant === 'artillery' ? 1.0 : 0.8) * scale;
+    
     ctx.fillStyle = shadow;
-    ctx.fillRect(-turretWidth/2, -turretHeight/2, turretWidth, turretHeight);
-    ctx.fillStyle = turret;
-    ctx.fillRect(-turretWidth/2, -turretHeight/2, turretWidth, turretHeight - (2*scale));
+    ctx.beginPath();
+    ctx.arc(0, 0, turretHeight/2 + 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = isAdrenalineActive ? '#ff8c00' : turret;
+    ctx.beginPath();
+    ctx.arc(0, 0, turretHeight/2, 0, Math.PI * 2);
+    ctx.fill();
     
     ctx.fillStyle = '#4a4a4a';
-    const barrelLength = width * (variant === 'artillery' ? 0.5 : 0.7) * scale;
+    const barrelLength = width * (variant === 'artillery' ? 0.5 : (variant === 'spawner' ? 0 : 0.7)) * scale;
     const barrelWidth = (variant === 'artillery' ? 12 : 6) * scale;
 
     if(isBoss) {
         // Twin barrels for boss
-        ctx.fillRect(turretWidth/2 - (5*scale), -(6*scale), barrelLength, 6*scale);
-        ctx.fillRect(turretWidth/2 - (5*scale), (1*scale), barrelLength, 6*scale);
-    } else {
-        ctx.fillRect(turretWidth/2 - (5*scale), -barrelWidth/2, barrelLength, barrelWidth);
+        ctx.fillRect(turretWidth/2 - (5*scale), -(8*scale), barrelLength, 6*scale);
+        ctx.fillRect(turretWidth/2 - (5*scale), (2*scale), barrelLength, 6*scale);
+    } else if (variant !== 'spawner') {
+        ctx.fillRect(0, -barrelWidth/2, barrelLength, barrelWidth);
         ctx.fillStyle = '#6a6a6a';
-        ctx.fillRect(turretWidth/2 - (5*scale), -barrelWidth/2, barrelLength, barrelWidth/2);
+        ctx.fillRect(0, -barrelWidth/2, barrelLength, barrelWidth/2);
     }
     ctx.restore(); // Turret rotation
     
     // Flag
-    if(!isBoss){
+    if(!isBoss && variant !== 'swarmer' && variant !== 'spawner'){
         const flagRenderer = flagRenderers[country.code];
         if (flagRenderer) {
             flagRenderer(ctx, -width/2*scale + 5, -height/2*scale + 5, 15, 9);
@@ -528,18 +576,26 @@ const drawTank = (ctx: CanvasRenderingContext2D, tank: Tank, target: GameEntity 
     // Damage Flash
     if (damageFlashTimer && damageFlashTimer > 0) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.fillRect(-width/2*scale, -height/2*scale, width*scale, height*scale);
+        ctx.fillRect(-width*scale/2, -height*scale/2, width*scale, height*scale);
+    }
+
+    // Stun effect
+    if (isStunned) {
+        ctx.fillStyle = 'rgba(0, 180, 255, 0.5)';
+        ctx.font = `${20 * scale}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('⚡', 0, -height*scale*0.7);
     }
 
     ctx.restore(); // Main transform
 
-    // Health Bar - Drawn outside the scaled/transformed context
+    // Health Bar
     if (health < maxHealth && !isBoss) {
         const barY = y - 10;
         ctx.fillStyle = '#333';
-        ctx.fillRect(x, barY, width, 5);
+        ctx.fillRect(x, barY, width*scale, 5);
         ctx.fillStyle = isAlly ? '#3498db' : health > maxHealth * 0.5 ? '#00FF00' : health > maxHealth * 0.25 ? '#FFFF00' : '#FF0000';
-        ctx.fillRect(x, barY, width * (health / maxHealth), 5);
+        ctx.fillRect(x, barY, width*scale * (health / maxHealth), 5);
     }
 
     // Shield effect
@@ -565,47 +621,71 @@ const drawShellCasing = (ctx: CanvasRenderingContext2D, shell: Particle) => {
 
 const drawBullet = (ctx: CanvasRenderingContext2D, bullet: Bullet) => {
     ctx.save();
-    ctx.shadowColor = bullet.color;
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = bullet.color;
-    ctx.beginPath();
-    ctx.arc(bullet.x + bullet.width/2, bullet.y + bullet.height/2, bullet.width/2, 0, Math.PI * 2);
-    ctx.fill();
     
-    // Trail
-    ctx.globalAlpha = 0.5;
-    ctx.fillStyle = bullet.color;
-    ctx.fillRect(bullet.x - bullet.vx * 0.5, bullet.y - bullet.vy * 0.5, bullet.width, bullet.height);
+    const trailStart = bullet.trail?.[0] || {x: bullet.x, y: bullet.y};
+    const gradient = ctx.createLinearGradient(trailStart.x, trailStart.y, bullet.x, bullet.y);
+    gradient.addColorStop(0, `rgba(${parseInt(bullet.color.slice(1,3), 16)}, ${parseInt(bullet.color.slice(3,5), 16)}, ${parseInt(bullet.color.slice(5,7), 16)}, 0)`);
+    gradient.addColorStop(0.8, bullet.color);
+    gradient.addColorStop(1, '#FFFFFF');
+
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = bullet.width / 1.5;
+    ctx.lineCap = 'round';
+    
+    ctx.beginPath();
+    ctx.moveTo(trailStart.x, trailStart.y);
+    ctx.lineTo(bullet.x, bullet.y);
+    ctx.stroke();
+    
     ctx.restore();
 };
 
 const drawExplosion = (ctx: CanvasRenderingContext2D, explosion: Explosion) => {
     const lifePercent = explosion.life / explosion.duration;
-    
-    // Shockwave
-    const shockwaveRadius = (1 - lifePercent) * (explosion.width * (explosion.isShrapnel ? 2.5 : 1.5));
-    const shockwaveAlpha = lifePercent;
-    ctx.strokeStyle = `rgba(255, 255, 220, ${shockwaveAlpha})`;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(explosion.x, explosion.y, shockwaveRadius, 0, Math.PI * 2);
-    ctx.stroke();
 
-    // Central flash
-    if(lifePercent > 0.7) {
-        ctx.fillStyle = `rgba(255, 255, 200, ${(1 - lifePercent) / 0.3})`;
+    // Shockwave
+    if (explosion.shockwave) {
+        ctx.strokeStyle = `rgba(255, 220, 180, ${explosion.shockwave.alpha})`;
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(explosion.x, explosion.y, (explosion.duration / 2) * ((1-lifePercent) / 0.3), 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(explosion.x, explosion.y, explosion.shockwave.radius, 0, Math.PI * 2);
+        ctx.stroke();
     }
 
+    // Central flash
+    if (lifePercent > 0.6 && !explosion.isRockDebris) {
+        const flashAlpha = (lifePercent - 0.6) / 0.4;
+        const gradient = ctx.createRadialGradient(explosion.x, explosion.y, 0, explosion.x, explosion.y, explosion.width * 0.5 * (1-lifePercent));
+        gradient.addColorStop(0, `rgba(255, 255, 255, ${flashAlpha})`);
+        gradient.addColorStop(0.5, `rgba(255, 220, 100, ${flashAlpha * 0.8})`);
+        gradient.addColorStop(1, `rgba(255, 100, 0, 0)`);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(explosion.x - explosion.width, explosion.y - explosion.width, explosion.width * 2, explosion.width * 2);
+    }
+
+    // Particles
     explosion.particles.forEach(p => {
         ctx.globalAlpha = lifePercent;
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * lifePercent, 0, Math.PI * 2);
+        if (explosion.isRockDebris) {
+            ctx.rect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+        } else {
+            ctx.arc(p.x, p.y, p.size * lifePercent, 0, Math.PI * 2);
+        }
         ctx.fill();
     });
+
+    // Smoke
+    explosion.smokeParticles.forEach(p => {
+        const smokeLife = p.life / p.maxLife;
+        const color = explosion.isRockDebris ? '120, 120, 110' : '80, 80, 80';
+        ctx.fillStyle = `rgba(${color}, ${0.4 * smokeLife * lifePercent})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (1 + (1 - smokeLife)), 0, Math.PI * 2);
+        ctx.fill();
+    });
+
     ctx.globalAlpha = 1;
 };
 
@@ -622,14 +702,13 @@ const drawPowerUp = (ctx: CanvasRenderingContext2D, powerUp: PowerUp) => {
     ctx.save();
     ctx.translate(powerUp.x + powerUp.width/2, powerUp.y + powerUp.height/2);
     ctx.rotate(Date.now() / 200);
-    ctx.fillStyle = '#FFD700';
-    ctx.font = '20px sans-serif';
+    const text = powerUp.powerUpType === 'rapid_fire' ? '🔥' : '🌌';
+    const color = powerUp.powerUpType === 'rapid_fire' ? '#FFD700' : '#8A2BE2';
+    ctx.fillStyle = color;
+    ctx.font = '24px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = '#FFD700';
-    const glow = 10 + Math.sin(Date.now() / 150) * 5;
-    ctx.shadowBlur = glow;
-    ctx.fillText('🔥', 0, 0);
+    ctx.fillText(text, 0, 0);
     ctx.restore();
 };
 
@@ -657,20 +736,14 @@ const drawSmokeParticle = (ctx: CanvasRenderingContext2D, particle: SmokeParticl
 
 const drawExperienceOrb = (ctx: CanvasRenderingContext2D, orb: ExperienceOrb) => {
     ctx.fillStyle = '#00FFFF';
-    ctx.shadowColor = '#00FFFF';
-    ctx.shadowBlur = 6;
     ctx.beginPath();
     ctx.arc(orb.x, orb.y, orb.width / 2, 0, Math.PI * 2);
     ctx.fill();
-    ctx.shadowBlur = 0;
 };
 
 const drawKamikazeDrone = (ctx: CanvasRenderingContext2D, drone: KamikazeDrone) => {
     ctx.fillStyle = '#FF4500';
-    ctx.shadowColor = '#FF4500';
-    ctx.shadowBlur = 10;
     ctx.fillRect(drone.x, drone.y, drone.width, drone.height);
-    ctx.shadowBlur = 0;
     ctx.fillStyle = 'white';
     ctx.fillRect(drone.x + 4, drone.y + 4, drone.width-8, drone.height-8);
 };
@@ -678,14 +751,9 @@ const drawKamikazeDrone = (ctx: CanvasRenderingContext2D, drone: KamikazeDrone) 
 const drawMine = (ctx: CanvasRenderingContext2D, mine: Mine) => {
     const color = mine.isArmed ? (Math.floor(Date.now() / 250) % 2 === 0 ? '#FFD700' : '#8B0000') : '#555';
     ctx.fillStyle = color;
-    if(mine.isArmed) {
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 10;
-    }
     ctx.beginPath();
     ctx.arc(mine.x + mine.width/2, mine.y + mine.height/2, mine.width/2, 0, Math.PI * 2);
     ctx.fill();
-    ctx.shadowBlur = 0;
 };
 
 const drawTireTrack = (ctx: CanvasRenderingContext2D, track: TireTrackPoint) => {
@@ -701,14 +769,11 @@ const drawFloatingText = (ctx: CanvasRenderingContext2D, text: FloatingText) => 
     ctx.fillStyle = text.color;
     ctx.font = 'bold 18px "Chivo Mono", monospace';
     ctx.textAlign = 'center';
-    ctx.shadowColor = 'black';
-    ctx.shadowBlur = 4;
     ctx.fillText(text.text, text.x + 15, text.y);
     ctx.globalAlpha = 1.0;
-    ctx.shadowBlur = 0;
 };
 
-const drawWeather = (ctx: CanvasRenderingContext2D, weather: WeatherState) => {
+const drawWeather = (ctx: CanvasRenderingContext2D, weather: WeatherState, width: number, height: number) => {
     if (weather.type === 'none') return;
 
     ctx.save();
@@ -729,37 +794,116 @@ const drawWeather = (ctx: CanvasRenderingContext2D, weather: WeatherState) => {
             ctx.fill();
         });
     } else if (weather.type === 'fog') {
-        const gradient = ctx.createRadialGradient(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, 100, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, CANVAS_WIDTH * 0.7);
+        const gradient = ctx.createRadialGradient(width / 2, height / 2, 100, width / 2, height / 2, width * 0.7);
         gradient.addColorStop(0, `rgba(200, 200, 210, 0)`);
         gradient.addColorStop(1, `rgba(200, 200, 210, ${weather.intensity * 1.2})`);
         ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.fillRect(0, 0, width, height);
     }
     ctx.restore();
 };
 
-const drawLowHealthVignette = (ctx: CanvasRenderingContext2D, player: Tank | null) => {
+const drawLowHealthVignette = (ctx: CanvasRenderingContext2D, player: Tank | null, width: number, height: number) => {
     if (!player || player.health > player.maxHealth * 0.25) return;
     
     const healthPercent = player.health / player.maxHealth;
-    const alpha = (1 - healthPercent / 0.25) * (0.5 + Math.sin(Date.now() / 150) * 0.3);
-    const gradient = ctx.createRadialGradient(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, 200, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, CANVAS_WIDTH / 2 + 100);
+    const alpha = (1 - healthPercent / 0.25) * (0.6 + Math.sin(Date.now() / 150) * 0.4);
+    const gradient = ctx.createRadialGradient(width / 2, height / 2, width * 0.6, width / 2, height / 2, width);
     gradient.addColorStop(0, 'rgba(255, 0, 0, 0)');
     gradient.addColorStop(1, `rgba(200, 0, 0, ${alpha})`);
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillRect(0, 0, width, height);
 };
 
-const drawStarfield = (ctx: CanvasRenderingContext2D, stars: Particle[]) => {
+const drawStarfield = (ctx: CanvasRenderingContext2D, stars: Particle[], width: number, height: number) => {
     ctx.fillStyle = '#01040f'; // Deep space blue
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillRect(0, 0, width, height);
+    
+    // Nebula
+    const grad = ctx.createRadialGradient(width*0.7, height*0.3, 50, width*0.7, height*0.3, Math.min(width, height) * 0.6);
+    grad.addColorStop(0, 'rgba(60, 20, 80, 0.6)');
+    grad.addColorStop(1, 'rgba(60, 20, 80, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,width,height);
+    
     stars.forEach(star => {
-        ctx.fillStyle = `rgba(255, 255, 255, ${star.life || 1})`;
+        if(star.isDebris) {
+            ctx.fillStyle = `rgba(50, 50, 60, ${star.alpha || 1})`;
+        } else {
+            ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha || 1})`;
+        }
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
         ctx.fill();
     });
 }
+
+const drawCityscapeBackground = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    ctx.fillStyle = '#4a4a4a'; // Dark asphalt color
+    ctx.fillRect(0, 0, width, height);
+    
+    // Draw road lines
+    ctx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
+    ctx.lineWidth = 10;
+    ctx.setLineDash([40, 60]);
+    
+    const numLanes = 5;
+    for (let i = 1; i < numLanes; i++) {
+        const x = (width / numLanes) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+};
+
+const drawBuilding = (ctx: CanvasRenderingContext2D, building: Building) => {
+    // Main structure
+    ctx.fillStyle = '#333';
+    ctx.fillRect(building.x, building.y, building.width, building.height);
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(building.x, building.y, building.width, building.height);
+
+    // Windows
+    ctx.fillStyle = 'rgba(100, 100, 150, 0.4)';
+    const windowSize = 10;
+    const gap = 15;
+    for (let y = building.y + 10; y < building.y + building.height - 10; y += gap) {
+        for (let x = building.x + 10; x < building.x + building.width - 10; x += gap) {
+            if (Math.random() > 0.2) { // Some windows are dark
+                 ctx.fillRect(x, y, windowSize, windowSize);
+            }
+        }
+    }
+    
+    // Damage
+    if (building.damageState > 0) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        if (building.damageState >= 1) {
+            ctx.moveTo(building.x + 5, building.y + 5);
+            ctx.lineTo(building.x + building.width - 5, building.y + building.height - 5);
+        }
+        if (building.damageState >= 2) {
+            ctx.moveTo(building.x + building.width - 5, building.y + 5);
+            ctx.lineTo(building.x + 5, building.y + building.height - 5);
+        }
+        ctx.stroke();
+    }
+};
+
+const drawRubble = (ctx: CanvasRenderingContext2D, rubble: Rubble) => {
+    const alpha = rubble.life / rubble.maxLife;
+    ctx.fillStyle = `rgba(50, 50, 50, ${alpha * 0.8})`;
+    // Draw a few overlapping rects to simulate a pile
+    ctx.fillRect(rubble.x, rubble.y, rubble.width, rubble.height);
+    ctx.fillStyle = `rgba(30, 30, 30, ${alpha * 0.8})`;
+    ctx.fillRect(rubble.x + 10, rubble.y + 10, rubble.width - 20, rubble.height - 20);
+};
+
 
 const drawArtilleryTarget = (ctx: CanvasRenderingContext2D, target: ArtilleryTarget) => {
     const progress = 1 - target.timer / target.maxTimer;
@@ -797,6 +941,48 @@ const drawArtilleryTarget = (ctx: CanvasRenderingContext2D, target: ArtilleryTar
     ctx.restore();
 }
 
+const drawSolarFlareWarning = (ctx: CanvasRenderingContext2D, flare: SolarFlareWarning) => {
+    const progress = flare.timer / flare.maxTimer;
+    const alpha = (1 - progress) * (0.6 + Math.sin(Date.now() / 100) * 0.2);
+    
+    const gradient = ctx.createRadialGradient(flare.x, flare.y, 0, flare.x, flare.y, flare.radius);
+    gradient.addColorStop(0, `rgba(255, 100, 0, ${alpha * 0.5})`);
+    gradient.addColorStop(0.8, `rgba(255, 120, 0, ${alpha * 0.2})`);
+    gradient.addColorStop(1, `rgba(255, 150, 0, 0)`);
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(flare.x, flare.y, flare.radius, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+const drawBlackHole = (ctx: CanvasRenderingContext2D, hole: BlackHole) => {
+    const lifePercent = hole.life / hole.maxLife;
+    const pullRadius = hole.pullRadius * lifePercent;
+
+    ctx.save();
+    ctx.translate(hole.x, hole.y);
+
+    // Accretion disk
+    const gradient = ctx.createRadialGradient(0, 0, 10, 0, 0, pullRadius);
+    gradient.addColorStop(0, 'rgba(20, 0, 30, 0.9)');
+    gradient.addColorStop(0.5, 'rgba(120, 50, 255, 0.5)');
+    gradient.addColorStop(1, 'rgba(150, 80, 255, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(-pullRadius, -pullRadius, pullRadius * 2, pullRadius * 2);
+
+    // Swirling particles
+    ctx.rotate(hole.rotation);
+    for (let i = 0; i < 20; i++) {
+        const dist = (i / 20) * pullRadius;
+        const angle = (i * 1.375 + hole.rotation * 2) % (Math.PI*2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${lifePercent * (1 - i/20)})`;
+        ctx.fillRect(Math.cos(angle) * dist, Math.sin(angle) * dist, 2, 2);
+    }
+    
+    ctx.restore();
+}
+
 const drawMartyrsBeacon = (ctx: CanvasRenderingContext2D, beacon: MartyrsBeacon) => {
     const progress = beacon.timer / beacon.maxTimer;
     const time = Date.now();
@@ -823,89 +1009,263 @@ const drawMartyrsBeacon = (ctx: CanvasRenderingContext2D, beacon: MartyrsBeacon)
     }
 }
 
-const drawVignette = (ctx: CanvasRenderingContext2D) => {
-    const gradient = ctx.createRadialGradient(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, CANVAS_HEIGHT/2, CANVAS_WIDTH/2, CANVAS_HEIGHT/2, CANVAS_WIDTH/2 + 150);
+const drawVignette = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    const gradient = ctx.createRadialGradient(width/2, height/2, height/2, width/2, height/2, width/2 + 150);
     gradient.addColorStop(0, 'rgba(0,0,0,0)');
     gradient.addColorStop(1, 'rgba(0,0,0,0.4)');
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillRect(0, 0, width, height);
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({ gameState }) => {
+const drawScorchMark = (ctx: CanvasRenderingContext2D, mark: ScorchMark) => {
+    const alpha = (mark.life / mark.maxLife) * 0.4;
+    ctx.fillStyle = `rgba(20, 20, 20, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(mark.x, mark.y, mark.radius, 0, Math.PI * 2);
+    ctx.fill();
+};
+
+const drawEMPBlast = (ctx: CanvasRenderingContext2D, blast: EMPBlast) => {
+    const lifePercent = 1 - (blast.life / blast.maxLife);
+    const radius = blast.radius;
+    const alpha = Math.sin(lifePercent * Math.PI); // Fades in and out
+
+    const gradient = ctx.createRadialGradient(blast.x, blast.y, radius * 0.8, blast.x, blast.y, radius);
+    gradient.addColorStop(0, `rgba(0, 180, 255, 0)`);
+    gradient.addColorStop(0.5, `rgba(0, 180, 255, ${alpha * 0.5})`);
+    gradient.addColorStop(1, `rgba(100, 200, 255, ${alpha})`);
+
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.arc(blast.x, blast.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Add some electrical arcs
+    ctx.strokeStyle = `rgba(200, 220, 255, ${alpha * 0.8})`;
+    ctx.lineWidth = 2;
+    for(let i=0; i<5; i++) {
+        ctx.beginPath();
+        const startAngle = Math.random() * Math.PI * 2;
+        const endAngle = startAngle + (Math.random() - 0.5);
+        ctx.arc(blast.x, blast.y, radius * (0.8 + Math.random() * 0.2), startAngle, endAngle);
+        ctx.stroke();
+    }
+}
+
+const drawAsteroid = (ctx: CanvasRenderingContext2D, asteroid: Asteroid) => {
+    ctx.save();
+    ctx.translate(asteroid.x, asteroid.y);
+
+    // Body
+    ctx.fillStyle = '#696969';
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(asteroid.shape[0].x, asteroid.shape[0].y);
+    for(let i = 1; i < asteroid.shape.length; i++) {
+        ctx.lineTo(asteroid.shape[i].x, asteroid.shape[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Craters and highlights
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath();
+    ctx.arc(asteroid.width * 0.1, asteroid.height * 0.1, asteroid.width * 0.15, 0, Math.PI*2);
+    ctx.fill();
+    
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.beginPath();
+    ctx.moveTo(asteroid.shape[0].x, asteroid.shape[0].y);
+    ctx.lineTo(asteroid.shape[1].x, asteroid.shape[1].y);
+    ctx.lineTo(asteroid.shape[2].x, asteroid.shape[2].y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Damage cracks
+    const damagePercent = 1 - (asteroid.health / asteroid.maxHealth);
+    if (damagePercent > 0.3) {
+        ctx.strokeStyle = `rgba(0,0,0,${(damagePercent - 0.3) * 2})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(asteroid.shape[0].x * 0.8, asteroid.shape[0].y * 0.8);
+        ctx.lineTo(asteroid.shape[4].x * 0.7, asteroid.shape[4].y * 0.7);
+        ctx.stroke();
+    }
+     if (damagePercent > 0.6) {
+        ctx.beginPath();
+        ctx.moveTo(asteroid.shape[2].x * 0.9, asteroid.shape[2].y * 0.9);
+        ctx.lineTo(asteroid.shape[6].x * 0.6, asteroid.shape[6].y * 0.6);
+        ctx.stroke();
+    }
+
+
+    ctx.restore();
+};
+
+const drawSpaceDebris = (ctx: CanvasRenderingContext2D, debris: SpaceDebris) => {
+    ctx.save();
+    ctx.translate(debris.x, debris.y);
+
+    // Main body
+    ctx.fillStyle = '#4B4E53';
+    ctx.strokeStyle = '#2A2C30';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(debris.shape[0].x, debris.shape[0].y);
+    for(let i = 1; i < debris.shape.length; i++) {
+        ctx.lineTo(debris.shape[i].x, debris.shape[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Highlights and details
+    ctx.fillStyle = 'rgba(200, 200, 210, 0.2)';
+    ctx.beginPath();
+    ctx.moveTo(debris.shape[0].x, debris.shape[0].y);
+    ctx.lineTo(debris.shape[1].x, debris.shape[1].y);
+    ctx.lineTo(debris.width * 0.1, debris.height * 0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+};
+
+const drawFrame = (ctx: CanvasRenderingContext2D, gameState: GameState, width: number, height: number) => {
+    ctx.save();
+        
+    const { magnitude, duration } = gameState.screenShake;
+    if (duration > 0) {
+        const dx = (Math.random() - 0.5) * magnitude;
+        const dy = (Math.random() - 0.5) * magnitude;
+        ctx.translate(dx, dy);
+    }
+
+    if (gameState.isUrbanMode) {
+        drawCityscapeBackground(ctx, width, height);
+    } else {
+        drawStarfield(ctx, gameState.starfield, width, height);
+    }
+    
+    gameState.scorchMarks.forEach(mark => drawScorchMark(ctx, mark));
+    gameState.tireTracks.forEach(track => drawTireTrack(ctx, track));
+    gameState.exhaustParticles.forEach(smoke => drawSmokeParticle(ctx, smoke));
+    
+    const allEntities: GameEntity[] = [
+        ...(gameState.player ? [gameState.player] : []), 
+        ...gameState.enemies, 
+        ...gameState.allies, 
+        ...(gameState.boss ? [gameState.boss] : []),
+        ...gameState.drones,
+        ...gameState.asteroids,
+        ...gameState.spaceDebris,
+        ...gameState.mines,
+        ...gameState.powerUps,
+        ...gameState.experienceOrbs,
+        ...gameState.buildings,
+        ...gameState.rubble,
+    ];
+    allEntities.sort((a, b) => (a.y + a.height) - (b.y + b.height));
+
+    allEntities.forEach(entity => {
+        switch (entity.type) {
+            case 'tank': {
+                const allTanksAndDrones = [
+                    ...(gameState.player ? [gameState.player] : []),
+                    ...gameState.enemies,
+                    ...gameState.allies,
+                    ...(gameState.boss ? [gameState.boss] : []),
+                    ...gameState.drones,
+                ];
+                const target = allTanksAndDrones.find(t => t.id === entity.targetId);
+                drawTank(ctx, entity, target || null);
+                break;
+            }
+            case 'kamikaze_drone':
+                drawKamikazeDrone(ctx, entity);
+                break;
+            case 'mine':
+                drawMine(ctx, entity);
+                break;
+            case 'powerup':
+                drawPowerUp(ctx, entity);
+                break;
+            case 'experience_orb':
+                drawExperienceOrb(ctx, entity);
+                break;
+            case 'asteroid':
+                drawAsteroid(ctx, entity);
+                break;
+            case 'space_debris':
+                drawSpaceDebris(ctx, entity);
+                break;
+            case 'building':
+                drawBuilding(ctx, entity);
+                break;
+            case 'rubble':
+                drawRubble(ctx, entity);
+                break;
+        }
+    });
+
+    // Drawing things that should be on top of tanks
+    gameState.bullets.forEach(b => drawBullet(ctx, b));
+    gameState.explosions.forEach(e => drawExplosion(ctx, e));
+    gameState.muzzleFlashes.forEach(f => drawMuzzleFlash(ctx, f));
+    gameState.smokeParticles.forEach(p => drawSmokeParticle(ctx, p));
+    gameState.sparks.forEach(s => drawSpark(ctx, s));
+    gameState.shellCasings.forEach(s => drawShellCasing(ctx, s));
+    gameState.artilleryTargets.forEach(t => drawArtilleryTarget(ctx, t));
+    gameState.solarFlares.forEach(f => drawSolarFlareWarning(ctx, f));
+    gameState.blackHoles.forEach(h => drawBlackHole(ctx, h));
+    if (gameState.martyrsBeacon) {
+        drawMartyrsBeacon(ctx, gameState.martyrsBeacon);
+    }
+    gameState.empBlasts.forEach(b => drawEMPBlast(ctx, b));
+    
+    drawWeather(ctx, gameState.weather, width, height);
+    if (gameState.lightTone !== '#ffffff') {
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = gameState.lightTone;
+        ctx.fillRect(0, 0, width, height);
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    drawLowHealthVignette(ctx, gameState.player, width, height);
+    drawVignette(ctx, width, height);
+    
+    gameState.floatingTexts.forEach(t => drawFloatingText(ctx, t));
+    
+    ctx.restore(); // Restore from screen shake
+};
+
+export const GameCanvas: React.FC<GameCanvasProps> = ({ gameStateRef, width, height }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        const context = canvas.getContext('2d', { alpha: false });
+        if (!context) return;
         
-        ctx.save();
+        let animationFrameId: number;
         
-        const { magnitude, duration } = gameState.screenShake;
-        if (duration > 0) {
-            const dx = (Math.random() - 0.5) * magnitude;
-            const dy = (Math.random() - 0.5) * magnitude;
-            ctx.translate(dx, dy);
-        }
-
-        drawStarfield(ctx, gameState.starfield);
-        
-        gameState.tireTracks.forEach(track => drawTireTrack(ctx, track));
-        gameState.mines.forEach(mine => drawMine(ctx, mine));
-        gameState.powerUps.forEach(powerUp => drawPowerUp(ctx, powerUp));
-        gameState.experienceOrbs.forEach(orb => drawExperienceOrb(ctx, orb));
-        gameState.artilleryTargets.forEach(target => drawArtilleryTarget(ctx, target));
-        
-        if (gameState.martyrsBeacon) {
-            drawMartyrsBeacon(ctx, gameState.martyrsBeacon);
-        }
-        
-        const allEntities: GameEntity[] = [
-            ...(gameState.player ? [gameState.player] : []), 
-            ...gameState.enemies, 
-            ...gameState.allies, 
-            ...(gameState.boss ? [gameState.boss] : []),
-            ...gameState.drones,
-            ...gameState.bullets,
-        ];
-        allEntities.sort((a, b) => (a.y + a.height) - (b.y + b.height));
-
-        const allGameObjects = [...gameState.enemies, ...gameState.drones, ...(gameState.player ? [gameState.player] : []), ...gameState.allies, ...(gameState.boss ? [gameState.boss] : [])];
-
-        allEntities.forEach(entity => {
-            if (entity.type === 'tank') {
-                 const target = allGameObjects.find(t => t.id === entity.targetId) ?? null;
-                 drawTank(ctx, entity, target);
-            } else if (entity.type === 'kamikaze_drone') {
-                drawKamikazeDrone(ctx, entity);
-            } else if (entity.type === 'bullet') {
-                drawBullet(ctx, entity);
+        const render = () => {
+            if (gameStateRef.current) {
+                drawFrame(context, gameStateRef.current, width, height);
             }
-        });
+            animationFrameId = requestAnimationFrame(render);
+        };
         
-        gameState.shellCasings.forEach(shell => drawShellCasing(ctx, shell));
-        gameState.sparks.forEach(spark => drawSpark(ctx, spark));
-        gameState.smokeParticles.forEach(smoke => drawSmokeParticle(ctx, smoke));
-        gameState.explosions.forEach(explosion => drawExplosion(ctx, explosion));
-        gameState.muzzleFlashes.forEach(flash => drawMuzzleFlash(ctx, flash));
-        
-        gameState.floatingTexts.forEach(text => drawFloatingText(ctx, text));
-        
-        // Weather and low health vignettes should be drawn last to overlay everything
-        drawWeather(ctx, gameState.weather);
-        drawLowHealthVignette(ctx, gameState.player);
-        drawVignette(ctx);
+        render();
 
-        ctx.restore();
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+        };
+    }, [gameStateRef, width, height]);
 
-    }, [gameState]);
-
-    return (
-        <canvas
-            ref={canvasRef}
-            width={CANVAS_WIDTH}
-            height={CANVAS_HEIGHT}
-        />
-    );
+    return <canvas ref={canvasRef} width={width} height={height} />;
 };

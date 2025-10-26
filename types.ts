@@ -1,5 +1,7 @@
 import type { TankDesign } from './hooks/tankDesigns';
 
+export type AbilityType = 'none' | 'aegis_shield' | 'overdrive' | 'emp_blast' | 'golden_bullet' | 'quick_repair';
+
 export enum GameStatus {
     START,
     PLAYING,
@@ -28,7 +30,6 @@ export interface GameObject {
     height: number;
 }
 
-export type AbilityType = 'none' | 'aegis_shield' | 'overdrive' | 'emp_blast' | 'golden_bullet' | 'quick_repair';
 
 export interface Tank extends GameObject {
     type: 'tank';
@@ -79,7 +80,23 @@ export interface Tank extends GameObject {
     healthRegenTimer: number;
 
     // New enemy variant
-    variant?: 'default' | 'artillery';
+    variant?: 'default' | 'artillery' | 'spawner' | 'swarmer';
+    // Spawner property
+    spawnCooldown?: number;
+
+    // Motion blur for overdrive
+    motionBlurTrail?: { x: number; y: number; life: number }[];
+
+    // EMP Blast property
+    isStunned?: boolean;
+    stunTimer?: number;
+
+    // Adrenaline Rush
+    adrenaline: number;
+    maxAdrenaline: number;
+    isAdrenalineActive: boolean;
+    adrenalineTimer: number;
+    consecutiveHits: number;
 }
 
 export interface Bullet extends GameObject {
@@ -90,6 +107,7 @@ export interface Bullet extends GameObject {
     isPlayerBullet: boolean;
     color: string;
     piercing?: boolean;
+    trail?: {x: number, y: number}[];
 }
 
 export interface Particle {
@@ -104,6 +122,8 @@ export interface Particle {
     rotationSpeed?: number;
     // For starfield
     speed?: number;
+    alpha?: number;
+    isDebris?: boolean;
 }
 
 export interface SmokeParticle extends Particle {
@@ -122,14 +142,17 @@ export interface MuzzleFlash extends GameObject {
 export interface Explosion extends GameObject {
     type: 'explosion';
     particles: Particle[];
+    smokeParticles: SmokeParticle[];
     life: number;
     duration: number;
     isShrapnel?: boolean;
+    isRockDebris?: boolean;
+    shockwave?: { radius: number; maxRadius: number; alpha: number; };
 }
 
 export interface PowerUp extends GameObject {
     type: 'powerup';
-    powerUpType: 'rapid_fire';
+    powerUpType: 'rapid_fire' | 'black_hole';
     life: number;
     duration: number;
 }
@@ -176,7 +199,6 @@ export interface ArtilleryTarget {
     type: 'artillery_target';
     x: number;
     y: number;
-// FIX: Add width and height to make ArtilleryTarget compatible with other GameEntity types that have dimensions.
     width: number;
     height: number;
     radius: number;
@@ -190,14 +212,70 @@ export interface MartyrsBeacon {
     type: 'martyrs_beacon';
     x: number;
     y: number;
-// FIX: Add width and height to make MartyrsBeacon compatible with other GameEntity types.
     width: number;
     height: number;
     timer: number;
     maxTimer: number;
 }
 
-export type GameEntity = Tank | Bullet | Explosion | PowerUp | ExperienceOrb | KamikazeDrone | Mine | ArtilleryTarget | MartyrsBeacon;
+export interface SolarFlareWarning extends GameObject {
+    type: 'solar_flare_warning';
+    timer: number;
+    maxTimer: number;
+    radius: number;
+}
+
+export interface BlackHole extends GameObject {
+    type: 'black_hole';
+    life: number;
+    maxLife: number;
+    pullRadius: number;
+    rotation: number;
+}
+
+export interface ScorchMark extends GameObject {
+    type: 'scorch_mark';
+    life: number;
+    maxLife: number;
+    radius: number;
+}
+
+export interface EMPBlast extends GameObject {
+    type: 'emp_blast';
+    radius: number;
+    maxRadius: number;
+    life: number;
+    maxLife: number;
+    hitEnemies: string[]; // Keep track of enemies already hit by this blast
+}
+
+export interface Asteroid extends GameObject {
+    type: 'asteroid';
+    health: number;
+    maxHealth: number;
+    shape: {x: number, y: number}[];
+}
+
+export interface SpaceDebris extends GameObject {
+    type: 'space_debris';
+    shape: {x: number, y: number}[];
+}
+
+export interface Building extends GameObject {
+    type: 'building';
+    health: number;
+    maxHealth: number;
+    damageState: number; // 0, 1, 2 for cracks
+}
+
+export interface Rubble extends GameObject {
+    type: 'rubble';
+    life: number;
+    maxLife: number;
+}
+
+
+export type GameEntity = Tank | Bullet | Explosion | PowerUp | ExperienceOrb | KamikazeDrone | Mine | ArtilleryTarget | MartyrsBeacon | SolarFlareWarning | BlackHole | ScorchMark | EMPBlast | Asteroid | SpaceDebris | Building | Rubble;
 
 export interface TireTrackPoint {
     x: number;
@@ -205,13 +283,20 @@ export interface TireTrackPoint {
     life: number;
 }
 
-export type WeatherType = 'none' | 'rain' | 'snow' | 'fog';
+export type WeatherType = 'none' | 'rain' | 'snow' | 'fog' | 'solar_flare';
 
 export interface WeatherState {
     type: WeatherType;
     intensity: number;
     timer: number;
     particles: Particle[];
+}
+
+export interface CustomWeatherSettings {
+    type: WeatherType;
+    duration: number;
+    nextType: WeatherType;
+    tone: string;
 }
 
 export interface GameState {
@@ -263,7 +348,49 @@ export interface GameState {
     artilleryTargets: ArtilleryTarget[];
     martyrsBeacon: MartyrsBeacon | null;
     martyrsBeaconPurchased: boolean;
+    // More new features
+    solarFlares: SolarFlareWarning[];
+    blackHoles: BlackHole[];
+    hasBlackHole: boolean;
+    scorchMarks: ScorchMark[];
+    empBlasts: EMPBlast[];
+    canvasWidth: number;
+    canvasHeight: number;
+    asteroids: Asteroid[];
+    asteroidSpawnTimer: number;
+    // Custom weather
+    customWeather?: CustomWeatherSettings;
+    lightTone: string;
+    // New in V2
+    exhaustParticles: SmokeParticle[];
+    spaceDebris: SpaceDebris[];
+    lastKillTimestamp: number;
+    recentKillCount: number;
+    // Urban Warfare mode
+    isUrbanMode: boolean;
+    buildings: Building[];
+    rubble: Rubble[];
 }
+
+export interface UiState {
+    status: GameStatus;
+    playerHealth: number;
+    playerMaxHealth: number;
+    playerAdrenaline: number;
+    playerMaxAdrenaline: number;
+    score: number;
+    time: number;
+    difficulty: number;
+    shields: number;
+    boss: { health: number; maxHealth: number; } | null;
+    isLevelUpModalOpen: boolean;
+    upgradeChoices: Upgrade[];
+    hasBlackHole: boolean;
+    killStreak: number;
+    scoreMultiplier: number;
+    allyCount: number;
+}
+
 
 export interface Keys {
     w: boolean;
@@ -272,4 +399,5 @@ export interface Keys {
     d: boolean;
     ' ': boolean;
     q: boolean;
+    e: boolean; // For Adrenaline Rush
 }

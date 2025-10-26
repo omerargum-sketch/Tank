@@ -1,18 +1,26 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { useGameEngine } from './hooks/useGameEngine';
-import type { Country, AbilityType, Upgrade, TankCustomization, Keys, Tank } from './types';
+import type { Country, AbilityType, Upgrade, TankCustomization, Keys, Tank, WeatherType, CustomWeatherSettings, GameState } from './types';
 import { GameStatus } from './types';
-import { COUNTRIES, CUSTOMIZATION_COLORS, CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
+import { COUNTRIES, CUSTOMIZATION_COLORS } from './constants';
 import { I18nProvider, useTranslation, I18nContext } from './i18n';
 import { createDesign } from './hooks/tankDesigns';
 
 const SHIELD_COST = 5000;
 const MARTYRS_BEACON_COST = 5000;
+const BACKUP_COST = 7500;
 
 const defaultCustomization: TankCustomization = {
     baseColor: '#556B2F', // NATO_GREEN
     turretColor: '#6B8E23',
+};
+
+const defaultWeatherSettings: CustomWeatherSettings = {
+    type: 'none',
+    duration: 60,
+    nextType: 'none',
+    tone: '#ffffff'
 };
 
 // Map country codes to locale codes
@@ -26,6 +34,7 @@ const AVAILABLE_MODS = [
     { id: 'champion_rush', titleKey: 'mods.champion_rush.title', descKey: 'mods.champion_rush.desc' },
     { id: 'ally_support', titleKey: 'mods.ally_support.title', descKey: 'mods.ally_support.desc' },
     { id: 'glass_cannon', titleKey: 'mods.glass_cannon.title', descKey: 'mods.glass_cannon.desc' },
+    { id: 'urban_warfare', titleKey: 'mods.urban_warfare.title', descKey: 'mods.urban_warfare.desc' },
 ];
 
 const useAnimatedCounter = (targetValue: number, duration: number = 300) => {
@@ -63,20 +72,37 @@ const useAnimatedCounter = (targetValue: number, duration: number = 300) => {
 const App: React.FC = () => {
     const { t, setLocale } = useTranslation();
     const [playerCountry, setPlayerCountry] = useState<Country | null>(null);
-    const keys = useRef<Keys>({ w: false, a: false, s: false, d: false, ' ': false, q: false });
-    const { gameState, startGame, buyShield, activateAbility, selectUpgrade, applyCheat, buyMartyrsBeacon } = useGameEngine(playerCountry, keys);
+    const keys = useRef<Keys>({ w: false, a: false, s: false, d: false, ' ': false, q: false, e: false });
+    
+    const [canvasSize, setCanvasSize] = useState({ width: 960, height: 600 });
+    const gameContainerRef = useRef<HTMLDivElement>(null);
+    
+    const { gameStateRef, uiState, startGame, buyShield, activateAbility, selectUpgrade, applyCheat, buyMartyrsBeacon, buyBackup, activateAdrenaline, returnToMenu } = useGameEngine(playerCountry, keys, canvasSize);
+
     const [showCountryModal, setShowCountryModal] = useState(true);
     const audioRef = useRef<HTMLAudioElement>(null);
     const [deviceType, setDeviceType] = useState<'pc' | 'mobile' | null>(null);
     const [showDeviceModal, setShowDeviceModal] = useState(false);
     const [customization, setCustomization] = useState<TankCustomization>(defaultCustomization);
     const [showCustomizationModal, setShowCustomizationModal] = useState(false);
-    const gameBoardRef = useRef<HTMLDivElement>(null);
     const [showTutorial, setShowTutorial] = useState(false);
     const [showCheatModal, setShowCheatModal] = useState(false);
     const [showModsModal, setShowModsModal] = useState(false);
     const [activeMods, setActiveMods] = useState<string[]>([]);
-    const displayedScore = useAnimatedCounter(gameState.score);
+    const [showWeatherModal, setShowWeatherModal] = useState(false);
+    const [weatherControlUnlocked, setWeatherControlUnlocked] = useState(false);
+    const [weatherSettings, setWeatherSettings] = useState<CustomWeatherSettings | undefined>(undefined);
+    const displayedScore = useAnimatedCounter(uiState.score);
+    const [lastKillStreak, setLastKillStreak] = useState(0);
+
+    useEffect(() => {
+        if (uiState.killStreak > lastKillStreak && uiState.killStreak > 0 && uiState.killStreak % 5 === 0) {
+            const killStreakEl = document.getElementById('kill-streak-widget');
+            killStreakEl?.classList.add('text-flash-animation');
+            setTimeout(() => killStreakEl?.classList.remove('text-flash-animation'), 500);
+        }
+        setLastKillStreak(uiState.killStreak);
+    }, [uiState.killStreak, lastKillStreak]);
     
     useEffect(() => {
         try {
@@ -88,9 +114,29 @@ const App: React.FC = () => {
             if(savedMods) {
                 setActiveMods(JSON.parse(savedMods));
             }
+            const weatherUnlocked = localStorage.getItem('weatherControlUnlocked');
+            if(weatherUnlocked === 'true') {
+                setWeatherControlUnlocked(true);
+            }
         } catch (e) {
             console.error("Could not load settings from localStorage", e);
         }
+    }, []);
+
+    useEffect(() => {
+        const gameContainer = gameContainerRef.current;
+        if (!gameContainer) return;
+    
+        const resizeObserver = new ResizeObserver(entries => {
+            for (let entry of entries) {
+                const { width, height } = entry.contentRect;
+                setCanvasSize({ width, height });
+            }
+        });
+    
+        resizeObserver.observe(gameContainer);
+    
+        return () => resizeObserver.disconnect();
     }, []);
 
     useEffect(() => {
@@ -120,15 +166,19 @@ const App: React.FC = () => {
         const audio = audioRef.current;
         if (!audio) return;
     
-        if (gameState.status === GameStatus.PLAYING) {
-            audio.play().catch(e => console.error("Audio play failed:", e));
+        if (uiState.status === GameStatus.PLAYING) {
+            if (audio.paused) {
+                audio.play().catch(e => console.error("Audio play failed:", e));
+            }
         } else {
-            audio.pause();
-            if (gameState.status === GameStatus.START || gameState.status === GameStatus.GAME_OVER) {
+            if (!audio.paused) {
+                audio.pause();
+            }
+            if (uiState.status === GameStatus.START || uiState.status === GameStatus.GAME_OVER) {
                 audio.currentTime = 0;
             }
         }
-    }, [gameState.status]);
+    }, [uiState.status]);
     
     useEffect(() => {
         try {
@@ -145,40 +195,10 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const gameBoard = gameBoardRef.current;
-        if (deviceType !== 'mobile' || !gameBoard) return;
-        
-        const handleResize = () => {
-            const boardWidth = CANVAS_WIDTH + 192 + 16;
-            const boardHeight = CANVAS_HEIGHT + 100;
-
-            const scale = Math.min(
-                window.innerWidth / boardWidth,
-                window.innerHeight / boardHeight
-            );
-
-            gameBoard.style.transform = `scale(${scale})`;
-            gameBoard.style.transformOrigin = 'top center';
-        };
-        
-        handleResize();
-        window.addEventListener('resize', handleResize);
-        window.addEventListener('orientationchange', handleResize);
-
-        return () => {
-            window.removeEventListener('resize', handleResize);
-            window.removeEventListener('orientationchange', handleResize);
-            if (gameBoard) {
-                gameBoard.style.transform = 'scale(1)';
-            }
-        };
-    }, [deviceType]);
-
-    useEffect(() => {
         if (deviceType !== 'pc') return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.key.toLowerCase() === 'c') && !e.repeat) {
-                if (gameState.status === GameStatus.PLAYING) {
+                if (uiState.status === GameStatus.PLAYING) {
                     buyShield();
                 }
             }
@@ -189,7 +209,7 @@ const App: React.FC = () => {
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [buyShield, deviceType, gameState.status]);
+    }, [buyShield, deviceType, uiState.status]);
 
     const handleCountrySelect = (country: Country) => {
         setPlayerCountry(country);
@@ -234,6 +254,11 @@ const App: React.FC = () => {
         }
         setShowModsModal(false);
     };
+    
+    const handleSaveWeather = (newSettings: CustomWeatherSettings | undefined) => {
+        setWeatherSettings(newSettings);
+        setShowWeatherModal(false);
+    }
 
     useEffect(() => {
         try {
@@ -254,14 +279,18 @@ const App: React.FC = () => {
     }, [setLocale]);
 
     const handleCheatCode = (code: string) => {
-        applyCheat(code);
+        const result = applyCheat(code);
+        if (result.success && result.feature === 'weather') {
+            setWeatherControlUnlocked(true);
+        }
         setShowCheatModal(false);
     };
 
     const renderModal = (title: string, children: React.ReactNode) => (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex justify-center items-center z-50">
-            <div className="bg-[#1a1a1a] border-2 border-[#444] rounded-lg p-8 shadow-lg text-center w-full max-w-md animate-fade-in">
-                <h2 className="text-3xl font-bold text-[#00ff00] mb-6 tracking-widest">{title}</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-70 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+            <div className="bg-[#0a140f] border-2 border-[var(--main-glow-color)] rounded-lg p-6 sm:p-8 shadow-2xl shadow-green-500/30 text-center w-full max-w-md animate-fade-in"
+                 style={{clipPath: 'polygon(0 5%, 100% 0, 100% 95%, 0 100%)'}}>
+                <h2 className="text-3xl font-bold text-[var(--main-glow-color)] mb-6 tracking-widest text-glow">{title}</h2>
                 {children}
             </div>
         </div>
@@ -271,10 +300,10 @@ const App: React.FC = () => {
         <button
             onClick={onClick}
             disabled={disabled}
-            className={`font-bold py-3 px-6 rounded-md hover:bg-white transition-all duration-300 transform hover:scale-105 disabled:bg-gray-600 disabled:cursor-not-allowed ${
+            className={`font-bold py-3 px-6 rounded-md hover:bg-white transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100 ${
                 secondary 
-                ? 'bg-transparent border-2 border-[#00ff00] text-[#00ff00] hover:bg-[#00ff00] hover:text-black' 
-                : 'bg-[#00ff00] text-black'
+                ? 'bg-transparent border-2 border-[var(--main-glow-color)] text-[var(--main-glow-color)] hover:bg-[var(--main-glow-color)] hover:text-black' 
+                : 'bg-[var(--main-glow-color)] text-black'
             } ${className}`}
         >
             {children}
@@ -291,7 +320,7 @@ const App: React.FC = () => {
                         if (country) handleCountrySelect(country);
                     }}
                     defaultValue=""
-                    className="bg-[#2a2a2a] border border-[#444] text-white p-3 rounded-md w-full"
+                    className="bg-[#1a1a1a] border border-[#444] text-white p-3 rounded-md w-full focus:border-[var(--main-glow-color)] focus:ring-1 focus:ring-[var(--main-glow-color)] transition"
                 >
                     <option value="" disabled>{t('selectCountry')}</option>
                     {COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.flag} {c.name}</option>)}
@@ -310,54 +339,75 @@ const App: React.FC = () => {
         ));
     }
     
+    const playerHealthPercent = uiState.playerMaxHealth > 0 ? (uiState.playerHealth / uiState.playerMaxHealth) * 100 : 0;
+    const isPlayerHealthLow = playerHealthPercent <= 25;
+    const isAdrenalineReady = uiState.playerAdrenaline >= uiState.playerMaxAdrenaline;
+    const { leaderboard } = gameStateRef.current; // Leaderboard is static, can read from ref
+
     return (
       <>
+        <style>{`
+            .text-flash-animation { animation: text-flash 0.5s ease-in-out; }
+            @keyframes button-glow-special {
+                from { box-shadow: 0 0 4px #8A2BE2, 0 0 8px #8A2BE2; }
+                to { box-shadow: 0 0 8px #C71585, 0 0 16px #C71585; }
+            }
+            .button-pulse-special {
+                animation: button-glow-special 1.5s infinite alternate;
+            }
+             @keyframes button-glow-adrenaline {
+                from { box-shadow: 0 0 5px var(--secondary-glow-color), 0 0 10px var(--secondary-glow-color); }
+                to { box-shadow: 0 0 10px #ff4500, 0 0 20px #ff4500; }
+            }
+            .button-pulse-adrenaline {
+                animation: button-glow-adrenaline 1.2s infinite alternate;
+            }
+            .hud-panel {
+                background-color: var(--dark-bg);
+                border: 2px solid #222;
+                box-shadow: inset 0 0 15px rgba(0, 255, 0, 0.2);
+            }
+            .hud-widget {
+                background: rgba(0,0,0,0.3);
+                padding: 0.25rem 0.5rem;
+                border-radius: 0.25rem;
+                border: 1px solid #222;
+            }
+            .health-bar-pulsing {
+                animation: border-pulse-red 1s infinite;
+            }
+        `}</style>
         <div className="scanline-overlay"></div>
         <audio ref={audioRef} src="https://storage.googleapis.com/proud-star-423616-g6-public/pixel-tank-arena-bgm.mp3" loop />
 
         {showTutorial && <TutorialModal t={t} deviceType={deviceType} onFinish={handleCompleteTutorial} />}
+        {showCustomizationModal && renderModal(t('customizeTank'), <CustomizationModal current={customization} onSave={handleSaveCustomization} onCancel={() => setShowCustomizationModal(false)} t={t} />)}
+        {showCheatModal && renderModal(t('enterCheatCode'), <CheatModal onConfirm={handleCheatCode} onCancel={() => setShowCheatModal(false)} t={t} />)}
+        {showModsModal && renderModal(t('gameMods'), <ModsModal current={activeMods} onSave={handleSaveMods} onCancel={() => setShowModsModal(false)} t={t} />)}
+        {showWeatherModal && renderModal(t('weatherMode'), <WeatherControlModal onSave={handleSaveWeather} onCancel={() => setShowWeatherModal(false)} t={t} />)}
 
-        {showCustomizationModal && (
-            renderModal(t('customizeTank'), (
-                <CustomizationModal current={customization} onSave={handleSaveCustomization} onCancel={() => setShowCustomizationModal(false)} t={t} />
-            ))
-        )}
-
-        {showCheatModal && (
-             renderModal(t('enterCheatCode'), (
-                <CheatModal onConfirm={handleCheatCode} onCancel={() => setShowCheatModal(false)} t={t} />
-             ))
-        )}
-        
-        {showModsModal && (
-            renderModal(t('gameMods'), (
-                <ModsModal current={activeMods} onSave={handleSaveMods} onCancel={() => setShowModsModal(false)} t={t} />
-            ))
-        )}
-
-        <div ref={gameBoardRef} className="flex flex-col items-center p-4">
-            <header className="w-full max-w-[1248px] mb-2 text-center">
-                <h1 className="text-4xl font-bold text-[#00ff00] tracking-widest text-glow" onClick={() => setShowCheatModal(true)}>{t('title')}</h1>
+        <div className="flex flex-col items-center justify-center w-screen h-screen p-2 sm:p-4 bg-black">
+            <header className="w-full mb-2 text-center flex-shrink-0">
+                <h1 className="text-3xl sm:text-5xl font-bold text-[var(--main-glow-color)] tracking-widest text-glow" onClick={() => setShowCheatModal(true)}>{t('title')}</h1>
             </header>
             
-            <main className="flex flex-row gap-4">
+            <main className="flex flex-row gap-2 sm:gap-4 w-full h-full flex-grow min-h-0">
                 {/* Left Panel */}
-                <aside className="w-48 bg-black/50 border-2 border-[#444] rounded-lg p-3 flex flex-col gap-3 backdrop-blur-sm">
-                     <div className="text-center">
-                        <h3 className="font-bold text-[#00ff00]">{t('difficulty')}</h3>
-                        <p className="text-2xl font-mono">{gameState.difficulty}</p>
+                <aside className="w-[20vw] max-w-[240px] hud-panel rounded-lg p-2 sm:p-4 flex flex-col gap-3 sm:gap-4 backdrop-blur-sm">
+                     <div className="text-center hud-widget">
+                        <h3 className="font-extrabold text-[var(--main-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('difficulty')}</h3>
+                        <p className="text-2xl sm:text-3xl font-mono">{uiState.difficulty}</p>
                     </div>
-                    <div className="text-center">
-                        <h3 className="font-bold text-[#00ff00]">{t('time')}</h3>
-                        <p className="text-2xl font-mono">{Math.floor(gameState.time)}s</p>
+                    <div className="text-center hud-widget">
+                        <h3 className="font-extrabold text-[var(--main-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('time')}</h3>
+                        <p className="text-2xl sm:text-3xl font-mono">{Math.floor(uiState.time)}s</p>
                     </div>
-                    {/* Leaderboard */}
-                    <div className="flex-1 overflow-y-auto">
-                         <h4 className="font-bold text-[#00ff00] text-center">{t('leaderboard')}</h4>
-                         <ul className="text-sm">
-                            {gameState.leaderboard.slice(0, 10).map((s, i) => (
+                    <div className="flex-1 overflow-y-auto min-h-0 hud-widget">
+                         <h4 className="font-extrabold text-[var(--main-glow-color)] text-sm sm:text-base text-center uppercase tracking-wider sticky top-0 bg-black/50 py-1">{t('leaderboard')}</h4>
+                         <ul className="text-sm sm:text-base">
+                            {leaderboard.slice(0, 10).map((s, i) => (
                                 <li key={i} className={`flex justify-between items-center p-1 rounded ${i === 0 ? 'bg-yellow-500/30' : ''}`}>
-                                    <span>{s.flag}</span>
+                                    <span className="text-lg">{s.flag}</span>
                                     <span className="font-mono">{s.score}</span>
                                 </li>
                             ))}
@@ -366,40 +416,46 @@ const App: React.FC = () => {
                 </aside>
                 
                 {/* Game Area */}
-                <div className="relative border-4 border-[#00ff00]/50 rounded-lg overflow-hidden shadow-2xl shadow-green-500/30">
-                    {gameState.boss && <BossHealthBar boss={gameState.boss} t={t} />}
-                    <GameCanvas gameState={gameState} />
-                    {deviceType === 'mobile' && <MobileControls keys={keys} activateAbility={activateAbility} buyShield={buyShield} />}
+                <div ref={gameContainerRef} className={`relative flex-grow h-full border-4 border-[var(--main-glow-color)]/50 rounded-lg overflow-hidden shadow-2xl shadow-green-500/30 transition-all duration-300 ${isPlayerHealthLow ? 'health-bar-pulsing' : ''}`}>
+                    {uiState.boss && <BossHealthBar bossState={uiState.boss} t={t} />}
+                    <GameCanvas gameStateRef={gameStateRef} width={canvasSize.width} height={canvasSize.height} />
+                    {deviceType === 'mobile' && <MobileControls keys={keys} activateAbility={activateAbility} buyShield={buyShield} hasBlackHole={uiState.hasBlackHole} activateAdrenaline={activateAdrenaline} adrenalineReady={isAdrenalineReady} />}
                     
-                    {(gameState.status === GameStatus.START || gameState.status === GameStatus.GAME_OVER) && (
-                        <div className="absolute inset-0 bg-black bg-opacity-70 flex flex-col justify-center items-center gap-4 p-4">
-                            {gameState.status === GameStatus.START && <h2 className="text-6xl font-bold text-[#00ff00] animate-pulse">{t('fight')}</h2>}
-                            {gameState.status === GameStatus.GAME_OVER && (
+                    {(uiState.status === GameStatus.START || uiState.status === GameStatus.GAME_OVER) && (
+                        <div className="absolute inset-0 bg-black bg-opacity-70 flex flex-col justify-center items-center gap-4 p-4 animated-grid-bg">
+                            {uiState.status === GameStatus.START && <h2 className="text-4xl sm:text-6xl font-bold text-[var(--main-glow-color)] text-glow">{t('fight')}</h2>}
+                            {uiState.status === GameStatus.GAME_OVER && (
                                 <>
-                                    <h2 className="text-5xl font-bold text-red-500">{t('gameOver')}</h2>
-                                    <p className="text-2xl text-white">{t('finalScore')}: {gameState.score}</p>
+                                    <h2 className="text-3xl sm:text-5xl font-bold text-red-500 text-glow">{t('gameOver')}</h2>
+                                    <p className="text-xl sm:text-3xl text-white">{t('finalScore')}: {uiState.score}</p>
                                 </>
                             )}
                             
-                            <UIButton onClick={() => startGame(customization, activeMods)} className="button-pulse w-full max-w-xs">
-                                {gameState.status === GameStatus.START ? t('startGame') : t('restartGame')}
+                            <UIButton onClick={() => startGame(customization, activeMods, weatherSettings)} className="button-pulse w-full max-w-xs text-xl !py-4">
+                                {uiState.status === GameStatus.START ? t('startGame') : t('restartGame')}
                             </UIButton>
-                            <div className="flex gap-2 mt-2">
-                                <UIButton onClick={() => setShowCustomizationModal(true)} secondary className="!py-2 !px-4 text-sm">{t('customizeTank')}</UIButton>
-                                <UIButton onClick={() => setShowModsModal(true)} secondary className="!py-2 !px-4 text-sm">{t('gameMods')}</UIButton>
+                             {uiState.status === GameStatus.GAME_OVER && (
+                                <UIButton onClick={returnToMenu} secondary className="w-full max-w-xs text-lg !py-2">
+                                    {t('returnToMenu')}
+                                </UIButton>
+                            )}
+                            <div className="flex flex-col sm:flex-row gap-2 mt-2">
+                                <UIButton onClick={() => setShowCustomizationModal(true)} secondary className="!py-2 !px-4">{t('customizeTank')}</UIButton>
+                                <UIButton onClick={() => setShowModsModal(true)} secondary className="!py-2 !px-4">{t('gameMods')}</UIButton>
+                                {weatherControlUnlocked && <UIButton onClick={() => setShowWeatherModal(true)} secondary className="!py-2 !px-4">{t('weatherMode')}</UIButton>}
                             </div>
                         </div>
                     )}
                     
-                    {gameState.isLevelUpModalOpen && (
-                        <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col justify-center items-center gap-4 p-8">
-                             <h2 className="text-4xl font-bold text-yellow-400">{t('levelUp')}</h2>
+                    {uiState.isLevelUpModalOpen && (
+                        <div className="absolute inset-0 bg-black bg-opacity-80 backdrop-blur-sm flex flex-col justify-center items-center gap-4 p-8">
+                             <h2 className="text-4xl font-bold text-yellow-400 text-glow">{t('levelUp')}</h2>
                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                {gameState.upgradeChoices.map(upgrade => (
-                                    <div key={upgrade.id} className="bg-[#2a2a2a] border-2 border-yellow-400 p-4 rounded-lg flex flex-col items-center text-center hover:bg-yellow-400/20 transition-colors">
+                                {uiState.upgradeChoices.map(upgrade => (
+                                    <div key={upgrade.id} className="bg-[#1a1a1a] border-2 border-yellow-400/50 p-4 rounded-lg flex flex-col items-center text-center hover:bg-yellow-400/20 hover:border-yellow-300 transition-all duration-300 transform hover:scale-105">
                                         <h3 className="text-lg font-bold text-yellow-300">{t(upgrade.title)}</h3>
-                                        <p className="text-sm text-gray-300 mb-4">{t(upgrade.description)}</p>
-                                        <UIButton onClick={() => selectUpgrade(upgrade)}>Select</UIButton>
+                                        <p className="text-sm text-gray-300 mb-4 flex-grow">{t(upgrade.description)}</p>
+                                        <UIButton onClick={() => selectUpgrade(upgrade)} className="bg-yellow-400 text-black hover:bg-yellow-300">Select</UIButton>
                                     </div>
                                 ))}
                              </div>
@@ -408,52 +464,52 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Right Panel */}
-                 <aside className="w-48 bg-black/50 border-2 border-[#444] rounded-lg p-3 flex flex-col gap-3 backdrop-blur-sm">
-                    <div className="text-center">
-                        <h3 className="font-bold text-[#00ff00]">{t('country')}</h3>
-                        <p className="text-2xl">{playerCountry?.flag}</p>
+                 <aside className="w-[20vw] max-w-[240px] hud-panel rounded-lg p-2 sm:p-4 flex flex-col gap-3 sm:gap-4 backdrop-blur-sm">
+                    <div className="text-center hud-widget">
+                        <h3 className="font-extrabold text-[var(--main-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('country')}</h3>
+                        <p className="text-3xl sm:text-4xl">{playerCountry?.flag}</p>
                     </div>
-                    <div className="text-center">
-                        <h3 className="font-bold text-[#00ff00]">{t('health')}</h3>
-                        <div className="w-full bg-gray-700 rounded-full h-4 border border-gray-500">
-                            <div className="bg-green-500 h-full rounded-full" style={{width: `${gameState.player ? (gameState.player.health / gameState.player.maxHealth) * 100 : 100}%`}}></div>
+                    <div className="text-center hud-widget">
+                        <h3 className="font-extrabold text-[var(--main-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('health')}</h3>
+                        <div className="w-full bg-black/50 rounded-full h-5 sm:h-6 border-2 border-gray-700 p-0.5 relative">
+                            <div className="bg-gradient-to-r from-red-500 via-yellow-400 to-green-500 h-full rounded-full transition-all duration-200" style={{width: `${playerHealthPercent}%`, backgroundPosition: `${100-playerHealthPercent}%`}}></div>
+                            <span className="absolute inset-0 text-white text-xs font-bold flex items-center justify-center">{uiState.playerHealth.toFixed(0)} / {uiState.playerMaxHealth.toFixed(0)}</span>
                         </div>
                     </div>
-                    <div className="text-center">
-                        <h3 className="font-bold text-[#00ff00]">{t('ability')}</h3>
-                        <UIButton onClick={activateAbility} disabled={gameState.player?.abilityCooldown > 0} className="w-full">
-                            {gameState.player?.abilityCooldown > 0 ? `${(gameState.player.abilityCooldown / 60).toFixed(1)}s` : t('ready')}
-                        </UIButton>
+                     <div className="text-center hud-widget">
+                        <h3 className="font-extrabold text-[var(--secondary-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('adrenaline')}</h3>
+                        <div className={`w-full bg-black/50 rounded-full h-5 sm:h-6 border-2 border-gray-700 p-0.5 ${isAdrenalineReady ? 'button-pulse-adrenaline' : ''}`}>
+                            <div className="bg-gradient-to-r from-orange-600 to-yellow-400 h-full rounded-full transition-all duration-200" style={{width: `${uiState.playerMaxAdrenaline > 0 ? (uiState.playerAdrenaline / uiState.playerMaxAdrenaline) * 100 : 0}%`}}></div>
+                        </div>
                     </div>
-                    <div className="text-center">
-                        <h3 className="font-bold text-[#00ff00]">{t('score')}</h3>
-                        <p className="text-2xl font-mono">{displayedScore}</p>
+                     <div id="kill-streak-widget" className="text-center hud-widget border-2 border-[var(--secondary-glow-color)]/50">
+                        <h3 className="font-extrabold text-[var(--secondary-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('killStreak')}</h3>
+                        <p className="text-2xl sm:text-3xl font-mono text-orange-400">{uiState.killStreak} <span className="text-sm sm:text-base">(x{uiState.scoreMultiplier.toFixed(1)})</span></p>
                     </div>
-                     <div className="text-center">
-                        <h3 className="font-bold text-[#00ff00]">{t('killStreak')}</h3>
-                        <p className="text-xl font-mono text-orange-400">{gameState.killStreak} <span className="text-sm">(x{gameState.scoreMultiplier.toFixed(1)})</span></p>
+                    <div className="text-center hud-widget">
+                        <h3 className="font-extrabold text-[var(--main-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('score')}</h3>
+                        <p className="text-2xl sm:text-3xl font-mono">{displayedScore}</p>
                     </div>
-                    <div className="bg-[#2a2a2a] p-2 rounded-lg text-center mt-auto flex flex-col gap-2">
-                        <h4 className="font-bold text-[#00ff00]">{t('shop')}</h4>
-                        <div>
-                            <p className="text-xs text-gray-300">{t('shop.shield.name')}</p>
+
+                    <div className="bg-[#000]/30 border-t-2 border-[var(--main-glow-color)]/30 pt-2 rounded-lg text-center mt-auto flex flex-col gap-2">
+                        <h4 className="font-extrabold text-[var(--main-glow-color)] uppercase tracking-wider">{t('shop')}</h4>
+                        <div className="text-xs sm:text-base hud-widget !p-2">
+                            <p className="text-sm text-gray-300 font-bold">{t('shop.shield.name')}</p>
                             <p className="text-xs text-gray-400 mb-1">{t('shop.shield.desc')}</p>
-                            <p className="text-sm font-mono">{t('cost')}: {SHIELD_COST}</p>
-                            <UIButton onClick={buyShield} disabled={gameState.score < SHIELD_COST} className="w-full text-sm !py-1 mt-1">
-                                {t('buy')} ({gameState.shields} {t('owned')})
+                            <UIButton onClick={buyShield} disabled={uiState.score < SHIELD_COST || uiState.status !== GameStatus.PLAYING} className="w-full !py-1 sm:!py-2 mt-1 text-sm">
+                                {t('buy')} ({uiState.shields}) - {SHIELD_COST}
                             </UIButton>
                         </div>
-                        <div>
-                            <p className="text-xs text-gray-300">{t('shop.martyrsBeacon.name')}</p>
-                            <p className="text-xs text-gray-400 mb-1">{t('shop.martyrsBeacon.desc')}</p>
-                            <p className="text-sm font-mono">{t('cost')}: {MARTYRS_BEACON_COST}</p>
-                            <UIButton onClick={buyMartyrsBeacon} disabled={gameState.score < MARTYRS_BEACON_COST || gameState.martyrsBeaconPurchased} className="w-full text-sm !py-1 mt-1">
-                                {gameState.martyrsBeaconPurchased ? t('shop.martyrsBeacon.purchased') : t('buy')}
+                        <div className="text-xs sm:text-base hud-widget !p-2">
+                             <p className="text-sm text-gray-300 font-bold">{t('shop.backup.name')}</p>
+                            <p className="text-xs text-gray-400 mb-1">{t('shop.backup.desc')}</p>
+                            <UIButton onClick={buyBackup} disabled={uiState.score < BACKUP_COST || (uiState.allyCount >= 2 && !activeMods.includes('ally_support')) || (uiState.allyCount >= 3 && activeMods.includes('ally_support')) || uiState.status !== GameStatus.PLAYING} className="w-full !py-1 sm:!py-2 mt-1 text-sm">
+                                {t('buy')} - {BACKUP_COST}
                             </UIButton>
                         </div>
                     </div>
-                      <div className="text-center text-xs text-gray-400">
-                        <h3 className="font-bold text-[#00ff00]">{t('modsActive')}</h3>
+                      <div className="text-center text-xs sm:text-sm text-gray-400 hud-widget">
+                        <h3 className="font-extrabold text-[var(--main-glow-color)] text-sm sm:text-base uppercase tracking-wider">{t('modsActive')}</h3>
                         <div className="h-6 overflow-y-auto">
                             {activeMods.length > 0 ? activeMods.map(m => t(`mods.${m}.title`)).join(', ') : t('noModsActive')}
                         </div>
@@ -466,18 +522,18 @@ const App: React.FC = () => {
 };
 
 // --- Helper Components ---
-const BossHealthBar: React.FC<{boss: Tank; t: (key: string) => string}> = ({boss, t}) => {
+const BossHealthBar: React.FC<{bossState: { health: number, maxHealth: number }; t: (key: string) => string}> = ({bossState, t}) => {
     return (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 w-3/4 z-10">
             <h3 className="text-center font-bold text-red-500 text-glow text-xl tracking-widest">{t('boss.name')}</h3>
             <div className="w-full bg-black/50 border-2 border-red-500 rounded-full h-6 p-1">
-                <div className="bg-red-600 h-full rounded-full transition-all duration-300" style={{width: `${(boss.health / boss.maxHealth) * 100}%`}}></div>
+                <div className="bg-gradient-to-r from-purple-600 via-red-500 to-orange-400 h-full rounded-full transition-all duration-300" style={{width: `${(bossState.health / bossState.maxHealth) * 100}%`}}></div>
             </div>
         </div>
     );
 };
 
-const MobileControls: React.FC<{ keys: React.MutableRefObject<Keys>, activateAbility: () => void, buyShield: () => void }> = ({ keys, activateAbility, buyShield }) => {
+const MobileControls: React.FC<{ keys: React.MutableRefObject<Keys>, activateAbility: () => void, buyShield: () => void, hasBlackHole: boolean, activateAdrenaline: () => void, adrenalineReady: boolean }> = ({ keys, activateAbility, buyShield, hasBlackHole, activateAdrenaline, adrenalineReady }) => {
     const joystickRef = useRef<HTMLDivElement>(null);
     const joystickInnerRef = useRef<HTMLDivElement>(null);
 
@@ -544,6 +600,14 @@ const MobileControls: React.FC<{ keys: React.MutableRefObject<Keys>, activateAbi
 
             {/* Action Buttons */}
             <div className="absolute bottom-8 right-8 flex flex-col gap-4 items-center pointer-events-auto">
+                {adrenalineReady && (
+                    <button
+                        onClick={activateAdrenaline}
+                        className="w-20 h-20 bg-orange-500/80 rounded-full flex justify-center items-center text-white font-bold text-sm p-1 text-center active:bg-orange-500/100 button-pulse-adrenaline"
+                    >
+                        HÜCUM
+                    </button>
+                )}
                 <button
                     onTouchStart={handleButtonTouch(' ', true)}
                     onTouchEnd={handleButtonTouch(' ', false)}
@@ -554,9 +618,9 @@ const MobileControls: React.FC<{ keys: React.MutableRefObject<Keys>, activateAbi
                 <div className="flex gap-4">
                     <button
                         onClick={activateAbility}
-                        className="w-16 h-16 bg-green-500/50 rounded-full flex justify-center items-center text-white font-bold active:bg-green-500/80"
+                        className={`w-16 h-16 bg-green-500/50 rounded-full flex justify-center items-center text-white font-bold text-xs p-1 text-center active:bg-green-500/80 ${hasBlackHole ? 'button-pulse-special' : ''}`}
                     >
-                        YETNK
+                        {hasBlackHole ? 'KARA DELİK' : 'YETNK'}
                     </button>
                      <button
                         onClick={buyShield}
@@ -597,7 +661,7 @@ const TutorialGraphic: React.FC<{ stepId: string, deviceType: 'pc' | 'mobile' | 
                         <g className="tut-tank" transform="translate(70, 30)">
                             <rect x="-10" y="-6" width="20" height="12" fill="#556B2F" />
                             <rect x="-5" y="-3" width="10" height="6" fill="#6B8E23" />
-                            <rect x="5" y="-1.5" width="10" height="3" fill="#4a4a4a" />
+                           <rect x="5" y="-1.5" width="10" height="3" fill="#4a4a4a" />
                         </g>
                     </svg>
                 ) : (
@@ -638,42 +702,33 @@ const TutorialGraphic: React.FC<{ stepId: string, deviceType: 'pc' | 'mobile' | 
                         <text x="50" y="34" className="tut-text" fontSize="10px">Q</text>
                     </svg>
                 );
-            case 'shop':
+            case 'adrenaline':
+                 return (
+                    <svg viewBox="0 0 100 60" className="w-48 h-auto">
+                         <defs><style>{`
+                            .adrenaline-bar { animation: fill-adrenaline 3s infinite linear; }
+                            @keyframes fill-adrenaline { 0% { width: 0; } 100% { width: 100%; } }
+                        `}</style></defs>
+                        <rect x="10" y="25" width="80" height="10" fill="#444" rx="2" />
+                        <rect x="10" y="25" width="80" height="10" fill="#ff8c00" rx="2" className="adrenaline-bar"/>
+                        <text x="50" y="18" className="tut-text" fontSize="8px">ADRENALINE (E)</text>
+                    </svg>
+                );
+            case 'asteroids':
                 return (
                      <svg viewBox="0 0 100 60" className="w-48 h-auto">
                         <defs><style>{`
-                            .score-text { animation: score-up 2s infinite; }
-                            .shield-icon { animation: shield-pop 2s infinite; }
-                            @keyframes score-up { 0%, 40% { opacity: 0; } 60%, 100% { opacity: 1; } }
-                            @keyframes shield-pop { 0%, 60% { transform: scale(0); } 80% { transform: scale(1.2); } 100% { transform: scale(1); } }
+                            .tut-bullet-2 { animation: fire-bullet-2 2s infinite ease-out; }
+                            .asteroid-chunk { animation: chunk-explode 2s infinite ease-out; }
+                            @keyframes fire-bullet-2 { 0% { transform: translate(0,0); opacity: 1; } 100% { transform: translate(35px, -10px); opacity: 0; } }
+                            @keyframes chunk-explode { 0%, 50% { opacity: 0; } 51% { opacity: 1; transform: translate(0,0); } 100% { opacity: 0; transform: translate(15px, 15px); } }
                         `}</style></defs>
-                        <text x="30" y="25" className="tut-text" fontSize="12px">SKOR</text>
-                        <text x="30" y="45" className="tut-text" fontSize="14px">4500</text>
-                        <g className="score-text">
-                            <path d="M 50 35 L 55 30 L 60 35" stroke="#00ff00" fill="none" />
-                            <text x="75" y="45" className="tut-text" fontSize="14px">5000</text>
-                        </g>
-                        <g transform="translate(50, 30)" className="shield-icon">
-                            <path d="M -10 0 L 0 -10 L 10 0 L 0 10 Z" fill="#00BFFF" />
-                        </g>
+                        <g transform="translate(20, 30)"><rect x="-10" y="-6" width="20" height="12" fill="#556B2F" /></g>
+                        <circle cx="38" cy="30" r="3" fill="#00FFFF" className="tut-bullet-2" />
+                        <path d="M 70 20 l 10 -5 l 5 10 l -5 10 l -10 -5 Z" fill="#696969" stroke="#444" />
+                        <path d="M 75 25 l 5 -2" stroke="#888" className="asteroid-chunk" />
+                        <circle cx="78" cy="32" r="2" fill="#00FFFF" className="asteroid-chunk" style={{animationDelay: '0.1s'}} />
                     </svg>
-                );
-            case 'xp':
-                return (
-                     <svg viewBox="0 0 100 60" className="w-48 h-auto">
-                         <defs><style>{`
-                            .xp-orb-1 { animation: collect-xp 3s infinite; }
-                            .xp-orb-2 { animation: collect-xp 3s infinite; animation-delay: 0.2s; }
-                            .xp-orb-3 { animation: collect-xp 3s infinite; animation-delay: 0.4s; }
-                            @keyframes collect-xp { 0% { transform: translate(0,0) scale(1); opacity: 1; } 100% { transform: translate(-30px, 10px) scale(0); opacity: 0; } }
-                         `}</style></defs>
-                        <g transform="translate(30, 30)">
-                            <rect x="-10" y="-6" width="20" height="12" fill="#556B2F" /><rect x="-5" y="-3" width="10" height="6" fill="#6B8E23" />
-                        </g>
-                        <circle cx="60" cy="20" r="4" fill="#00FFFF" className="xp-orb-1" />
-                        <circle cx="70" cy="35" r="4" fill="#00FFFF" className="xp-orb-2" />
-                        <circle cx="55" cy="45" r="4" fill="#00FFFF" className="xp-orb-3" />
-                     </svg>
                 );
             case 'survive':
                  return (
@@ -700,8 +755,8 @@ const TutorialModal: React.FC<{t: (key: string) => string; deviceType: 'pc'|'mob
         { title: 'tutorial.step1.title', content: deviceType === 'pc' ? 'tutorial.step1.pc' : 'tutorial.step1.mobile', graphic: 'move' },
         { title: 'tutorial.step2.title', content: deviceType === 'pc' ? 'tutorial.step2.pc' : 'tutorial.step2.mobile', graphic: 'fire' },
         { title: 'tutorial.step3.title', content: deviceType === 'pc' ? 'tutorial.step3.pc' : 'tutorial.step3.mobile', graphic: 'ability' },
-        { title: 'tutorial.step4.title', content: deviceType === 'pc' ? 'tutorial.step4.pc' : 'tutorial.step4.mobile', graphic: 'shop' },
-        { title: 'tutorial.step5.title', content: 'tutorial.step5.content', graphic: 'xp' },
+        { title: 'tutorial.step7.title', content: deviceType === 'pc' ? 'tutorial.step7.pc' : 'tutorial.step7.mobile', graphic: 'adrenaline' },
+        { title: 'tutorial.step8.title', content: 'tutorial.step8.content', graphic: 'asteroids' },
         { title: 'tutorial.step6.title', content: 'tutorial.step6.content', graphic: 'survive' },
     ];
     return (
@@ -809,6 +864,50 @@ const ModsModal: React.FC<{ current: string[], onSave: (mods: string[]) => void,
         </div>
     );
 };
+
+const WeatherControlModal: React.FC<{
+    onSave: (settings: CustomWeatherSettings | undefined) => void;
+    onCancel: () => void;
+    t: (key: string) => string;
+}> = ({ onSave, onCancel, t }) => {
+    const [settings, setSettings] = useState<CustomWeatherSettings>(defaultWeatherSettings);
+    const weatherTypes: WeatherType[] = ['none', 'rain', 'snow', 'fog', 'solar_flare'];
+
+    const handleSave = () => {
+        // If settings are default, pass undefined to disable custom weather
+        const isDefault = settings.type === 'none' && settings.nextType === 'none' && settings.duration === 60;
+        onSave(isDefault ? undefined : settings);
+    }
+
+    return (
+        <div className="flex flex-col gap-4 text-left">
+            <label className="flex flex-col gap-1">
+                <span className="font-bold text-gray-300">{t('weather.type')}</span>
+                <select value={settings.type} onChange={e => setSettings(s => ({...s, type: e.target.value as WeatherType}))} className="bg-[#2a2a2a] border border-[#444] text-white p-2 rounded-md">
+                    {weatherTypes.map(w => <option key={w} value={w}>{w}</option>)}
+                </select>
+            </label>
+            <label className="flex flex-col gap-1">
+                <span className="font-bold text-gray-300">{t('weather.duration')} (s)</span>
+                <input type="number" value={settings.duration} onChange={e => setSettings(s => ({...s, duration: parseInt(e.target.value, 10) || 60}))} className="bg-[#2a2a2a] border border-[#444] text-white p-2 rounded-md" />
+            </label>
+            <label className="flex flex-col gap-1">
+                <span className="font-bold text-gray-300">{t('weather.nextType')}</span>
+                <select value={settings.nextType} onChange={e => setSettings(s => ({...s, nextType: e.target.value as WeatherType}))} className="bg-[#2a2a2a] border border-[#444] text-white p-2 rounded-md">
+                     {weatherTypes.map(w => <option key={`next-${w}`} value={w}>{w}</option>)}
+                </select>
+            </label>
+            <label className="flex flex-col gap-1">
+                <span className="font-bold text-gray-300">{t('weather.lightTone')}</span>
+                <input type="color" value={settings.tone} onChange={e => setSettings(s => ({...s, tone: e.target.value}))} className="bg-[#2a2a2a] border border-[#444] w-full h-10 p-1 rounded-md" />
+            </label>
+            <div className="flex justify-center gap-4 mt-4">
+                <button onClick={onCancel} className="text-gray-400">{t('cancel')}</button>
+                <button onClick={handleSave} className="bg-[#00ff00] text-black font-bold py-2 px-6 rounded">{t('saveAndClose')}</button>
+            </div>
+        </div>
+    )
+}
 
 
 export default App;

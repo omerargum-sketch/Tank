@@ -8,9 +8,17 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Chivo+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-color: #01040f;
+            --main-glow-color: #00ff00;
+            --secondary-glow-color: #ff8c00;
+            --danger-glow-color: #ff0000;
+            --dark-bg: rgba(10, 20, 15, 0.8);
+        }
+
         body {
             font-family: 'Chivo Mono', monospace;
-            background-color: #000000;
+            background-color: var(--bg-color);
             color: #f0f0f0;
             display: flex;
             justify-content: center;
@@ -20,13 +28,37 @@
             margin: 0;
         }
         @keyframes glow {
-            0%, 100% { text-shadow: 0 0 5px #00ff00, 0 0 10px #00ff00, 0 0 15px #00ff00; }
-            50% { text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00, 0 0 30px #00ff00, 0 0 40px #6fff6f; }
+            0%, 100% { text-shadow: 0 0 3px var(--main-glow-color), 0 0 6px var(--main-glow-color); }
+            50% { text-shadow: 0 0 6px var(--main-glow-color), 0 0 12px var(--main-glow-color), 0 0 18px #6fff6f; }
         }
         @keyframes button-glow {
-            from { box-shadow: 0 0 5px #00ff00, 0 0 10px #00ff00; }
-            to { box-shadow: 0 0 10px #6fff6f, 0 0 20px #6fff6f; }
+            from { box-shadow: 0 0 3px var(--main-glow-color), 0 0 7px var(--main-glow-color); }
+            to { box-shadow: 0 0 6px #6fff6f, 0 0 12px #6fff6f; }
         }
+        @keyframes border-pulse-red {
+            0% { box-shadow: inset 0 0 15px 5px rgba(255, 0, 0, 0.4); }
+            50% { box-shadow: inset 0 0 25px 10px rgba(255, 0, 0, 0.8); }
+            100% { box-shadow: inset 0 0 15px 5px rgba(255, 0, 0, 0.4); }
+        }
+        @keyframes text-flash {
+            0%, 100% { color: var(--secondary-glow-color); text-shadow: 0 0 8px var(--secondary-glow-color); }
+            50% { color: #ffffff; text-shadow: 0 0 20px #ffffff; }
+        }
+        @keyframes bg-pan {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .animated-grid-bg {
+             background-color: #010204;
+             background-image:
+                linear-gradient(var(--main-glow-color) 1px, transparent 1px),
+                linear-gradient(to right, var(--main-glow-color) 1px, transparent 1px);
+             background-size: 40px 40px;
+             background-position: 0 0;
+             animation: bg-pan 30s linear infinite;
+        }
+
         .text-glow {
             animation: glow 2.5s ease-in-out infinite;
         }
