@@ -451,7 +451,7 @@ const flagRenderers: Record<string, (ctx: CanvasRenderingContext2D, x: number, y
 };
 
 const drawTank = (ctx: CanvasRenderingContext2D, tank: Tank, target: GameEntity | null) => {
-    const { x, y, width, height, design, health, maxHealth, country, isInvincible, damageFlashTimer, spawnAnimProgress, isAlly, isBoss, variant, motionBlurTrail, isStunned, isAdrenalineActive } = tank;
+    const { x, y, width, height, design, health, maxHealth, country, isInvincible, damageFlashTimer, spawnAnimProgress, isAlly, isBoss, variant, motionBlurTrail, isStunned, isAdrenalineActive, healingAuraTimer } = tank;
     const { base, turret, shadow, highlight, track } = design;
     const scale = isBoss ? 1.8 : (variant === 'swarmer' ? 0.6 : 1);
 
@@ -476,6 +476,21 @@ const drawTank = (ctx: CanvasRenderingContext2D, tank: Tank, target: GameEntity 
         ctx.fill();
     }
     
+     // Healing Aura
+    if (healingAuraTimer && healingAuraTimer > 0) {
+        const time = Date.now();
+        const auraRadius = 40 + Math.sin(time / 150) * 5;
+        const alpha = Math.min(1, healingAuraTimer / 60) * 0.5;
+        const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, auraRadius);
+        gradient.addColorStop(0, 'rgba(0, 255, 100, 0)');
+        gradient.addColorStop(0.7, `rgba(0, 255, 100, ${alpha})`);
+        gradient.addColorStop(1, 'rgba(0, 255, 100, 0)');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(0, 0, auraRadius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
     ctx.scale(animScale, animScale);
     if(isSpawning) ctx.globalAlpha = spawnAnimProgress;
     
@@ -551,8 +566,9 @@ const drawTank = (ctx: CanvasRenderingContext2D, tank: Tank, target: GameEntity 
     ctx.fill();
     
     ctx.fillStyle = '#4a4a4a';
-    const barrelLength = width * (variant === 'artillery' ? 0.5 : (variant === 'spawner' ? 0 : 0.7)) * scale;
-    const barrelWidth = (variant === 'artillery' ? 12 : 6) * scale;
+    const barrelLength = width * (variant === 'artillery' ? 0.5 : (variant === 'spawner' ? 0 : (variant === 'sniper' ? 1.2 : 0.7))) * scale;
+    const barrelWidth = (variant === 'artillery' ? 12 : (variant === 'sniper' ? 4 : 6)) * scale;
+
 
     if(isBoss) {
         // Twin barrels for boss
@@ -563,6 +579,13 @@ const drawTank = (ctx: CanvasRenderingContext2D, tank: Tank, target: GameEntity 
         ctx.fillStyle = '#6a6a6a';
         ctx.fillRect(0, -barrelWidth/2, barrelLength, barrelWidth/2);
     }
+
+    if (variant === 'medic') {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(-5 * scale, -12 * scale, 10 * scale, 24 * scale);
+        ctx.fillRect(-12 * scale, -5 * scale, 24 * scale, 10 * scale);
+    }
+
     ctx.restore(); // Turret rotation
     
     // Flag
@@ -622,20 +645,33 @@ const drawShellCasing = (ctx: CanvasRenderingContext2D, shell: Particle) => {
 const drawBullet = (ctx: CanvasRenderingContext2D, bullet: Bullet) => {
     ctx.save();
     
-    const trailStart = bullet.trail?.[0] || {x: bullet.x, y: bullet.y};
-    const gradient = ctx.createLinearGradient(trailStart.x, trailStart.y, bullet.x, bullet.y);
-    gradient.addColorStop(0, `rgba(${parseInt(bullet.color.slice(1,3), 16)}, ${parseInt(bullet.color.slice(3,5), 16)}, ${parseInt(bullet.color.slice(5,7), 16)}, 0)`);
-    gradient.addColorStop(0.8, bullet.color);
-    gradient.addColorStop(1, '#FFFFFF');
+    if (bullet.isHealing) {
+        const time = Date.now();
+        const radius = bullet.width / 2 + Math.sin(time / 50) * 2;
+        const gradient = ctx.createRadialGradient(bullet.x, bullet.y, 0, bullet.x, bullet.y, radius);
+        gradient.addColorStop(0, 'rgba(200, 255, 200, 1)');
+        gradient.addColorStop(0.7, 'rgba(0, 255, 0, 0.8)');
+        gradient.addColorStop(1, 'rgba(0, 255, 0, 0)');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+    } else {
+        const trailStart = bullet.trail?.[0] || {x: bullet.x, y: bullet.y};
+        const gradient = ctx.createLinearGradient(trailStart.x, trailStart.y, bullet.x, bullet.y);
+        gradient.addColorStop(0, `rgba(${parseInt(bullet.color.slice(1,3), 16)}, ${parseInt(bullet.color.slice(3,5), 16)}, ${parseInt(bullet.color.slice(5,7), 16)}, 0)`);
+        gradient.addColorStop(0.8, bullet.color);
+        gradient.addColorStop(1, '#FFFFFF');
 
-    ctx.strokeStyle = gradient;
-    ctx.lineWidth = bullet.width / 1.5;
-    ctx.lineCap = 'round';
-    
-    ctx.beginPath();
-    ctx.moveTo(trailStart.x, trailStart.y);
-    ctx.lineTo(bullet.x, bullet.y);
-    ctx.stroke();
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = bullet.width / 1.5;
+        ctx.lineCap = 'round';
+        
+        ctx.beginPath();
+        ctx.moveTo(trailStart.x, trailStart.y);
+        ctx.lineTo(bullet.x, bullet.y);
+        ctx.stroke();
+    }
     
     ctx.restore();
 };

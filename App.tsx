@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { useGameEngine } from './hooks/useGameEngine';
@@ -69,6 +70,69 @@ const useAnimatedCounter = (targetValue: number, duration: number = 300) => {
     return count;
 };
 
+const VictoryAnimation: React.FC<{ t: (key: string) => string }> = ({ t }) => {
+    const [confetti, setConfetti] = useState<{
+        id: number; x: number; y: number; vx: number; vy: number;
+        rotation: number; rotationSpeed: number; color: string; size: number;
+    }[]>([]);
+
+    useEffect(() => {
+        const newConfetti = Array.from({ length: 150 }).map(() => ({
+            id: Math.random(),
+            x: Math.random() * window.innerWidth,
+            y: -20 - Math.random() * window.innerHeight,
+            vx: Math.random() * 6 - 3,
+            vy: Math.random() * 5 + 5,
+            rotation: Math.random() * 360,
+            rotationSpeed: Math.random() * 20 - 10,
+            color: ['#FFD700', '#FF4500', '#00FF00', '#00BFFF', '#FF1493'][Math.floor(Math.random() * 5)],
+            size: Math.random() * 10 + 5,
+        }));
+        setConfetti(newConfetti);
+
+        let animationFrameId: number;
+        const animate = () => {
+            setConfetti(currentConfetti =>
+                currentConfetti.map(p => {
+                    const newP = { ...p };
+                    newP.x += newP.vx;
+                    newP.y += newP.vy;
+                    newP.vy += 0.1; // gravity
+                    newP.rotation += newP.rotationSpeed;
+                    return newP;
+                }).filter(p => p.y < window.innerHeight + 20)
+            );
+            animationFrameId = requestAnimationFrame(animate);
+        };
+        animationFrameId = requestAnimationFrame(animate);
+
+        return () => cancelAnimationFrame(animationFrameId);
+    }, []);
+
+    return (
+        <div className="fixed inset-0 pointer-events-none z-[100] flex justify-center items-center overflow-hidden">
+            <h2 className="text-8xl font-bold text-yellow-400 text-glow animate-pulse" style={{ textShadow: '0 0 20px #FFD700, 0 0 40px #FFD700' }}>
+                {t('victory')}
+            </h2>
+            {confetti.map(p => (
+                <div
+                    key={p.id}
+                    style={{
+                        position: 'absolute',
+                        left: `${p.x}px`,
+                        top: `${p.y}px`,
+                        width: `${p.size}px`,
+                        height: `${p.size * 1.5}px`,
+                        backgroundColor: p.color,
+                        transform: `rotate(${p.rotation}deg)`,
+                        opacity: 0.9,
+                    }}
+                />
+            ))}
+        </div>
+    );
+};
+
 const App: React.FC = () => {
     const { t, setLocale } = useTranslation();
     const [playerCountry, setPlayerCountry] = useState<Country | null>(null);
@@ -94,12 +158,22 @@ const App: React.FC = () => {
     const [weatherSettings, setWeatherSettings] = useState<CustomWeatherSettings | undefined>(undefined);
     const displayedScore = useAnimatedCounter(uiState.score);
     const [lastKillStreak, setLastKillStreak] = useState(0);
+    const [showVictory, setShowVictory] = useState(false);
+    const prevBossStateRef = useRef(uiState.boss);
+
+    useEffect(() => {
+        if (prevBossStateRef.current && !uiState.boss && uiState.status === GameStatus.PLAYING) {
+            setShowVictory(true);
+            setTimeout(() => setShowVictory(false), 5000);
+        }
+        prevBossStateRef.current = uiState.boss;
+    }, [uiState.boss, uiState.status]);
 
     useEffect(() => {
         if (uiState.killStreak > lastKillStreak && uiState.killStreak > 0 && uiState.killStreak % 5 === 0) {
             const killStreakEl = document.getElementById('kill-streak-widget');
             killStreakEl?.classList.add('text-flash-animation');
-            setTimeout(() => killStreakEl?.classList.remove('text-flash-animation'), 500);
+            setTimeout(() => killStreakEl?.classList.remove('text-flash-animation'), 1000);
         }
         setLastKillStreak(uiState.killStreak);
     }, [uiState.killStreak, lastKillStreak]);
@@ -347,7 +421,7 @@ const App: React.FC = () => {
     return (
       <>
         <style>{`
-            .text-flash-animation { animation: text-flash 0.5s ease-in-out; }
+            .text-flash-animation { animation: text-flash 0.5s ease-in-out 2; }
             @keyframes button-glow-special {
                 from { box-shadow: 0 0 4px #8A2BE2, 0 0 8px #8A2BE2; }
                 to { box-shadow: 0 0 8px #C71585, 0 0 16px #C71585; }
@@ -380,6 +454,7 @@ const App: React.FC = () => {
         <div className="scanline-overlay"></div>
         <audio ref={audioRef} src="https://storage.googleapis.com/proud-star-423616-g6-public/pixel-tank-arena-bgm.mp3" loop />
 
+        {showVictory && <VictoryAnimation t={t} />}
         {showTutorial && <TutorialModal t={t} deviceType={deviceType} onFinish={handleCompleteTutorial} />}
         {showCustomizationModal && renderModal(t('customizeTank'), <CustomizationModal current={customization} onSave={handleSaveCustomization} onCancel={() => setShowCustomizationModal(false)} t={t} />)}
         {showCheatModal && renderModal(t('enterCheatCode'), <CheatModal onConfirm={handleCheatCode} onCancel={() => setShowCheatModal(false)} t={t} />)}
@@ -794,11 +869,13 @@ const CustomizationModal: React.FC<{current: TankCustomization; onSave: (c: Tank
         <div className="flex flex-col gap-6">
             <div>
                 <h3 className="text-lg font-bold mb-2">{t('baseColor')}</h3>
-                <div className="flex flex-wrap gap-2 justify-center">{CUSTOMIZATION_COLORS.map(c => <ColorButton key={c+"b"} color={c} type="base"/>)}</div>
+                {/* FIX: Pass the color property `c.color` instead of the whole object `c`. Use `c.color` for a unique key. */}
+                <div className="flex flex-wrap gap-2 justify-center">{CUSTOMIZATION_COLORS.map(c => <ColorButton key={c.color + "b"} color={c.color} type="base"/>)}</div>
             </div>
              <div>
                 <h3 className="text-lg font-bold mb-2">{t('turretColor')}</h3>
-                <div className="flex flex-wrap gap-2 justify-center">{CUSTOMIZATION_COLORS.map(c => <ColorButton key={c+"t"} color={c} type="turret"/>)}</div>
+                {/* FIX: Pass the color property `c.color` instead of the whole object `c`. Use `c.color` for a unique key. */}
+                <div className="flex flex-wrap gap-2 justify-center">{CUSTOMIZATION_COLORS.map(c => <ColorButton key={c.color + "t"} color={c.color} type="turret"/>)}</div>
             </div>
             <div className="flex justify-center gap-4 mt-4">
                 <button onClick={onCancel} className="text-gray-400">{t('cancel')}</button>

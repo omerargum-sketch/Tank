@@ -1,6 +1,4 @@
-
-
-import type { Country } from './types';
+import type { Country, Achievement, PlayerStats } from './types';
 
 export const FPS = 60;
 export const MS_PER_FRAME = 1000 / FPS;
@@ -33,17 +31,75 @@ export const COUNTRIES: Country[] = [
     { code: "AT", name: "Austria", flag: "🇦🇹" }, { code: "FI", name: "Finland", flag: "🇫🇮" },
 ];
 
-export const CUSTOMIZATION_COLORS = [
-    // NATO
-    '#556B2F', '#6B8E23', '#808000', 
-    // Desert
-    '#C19A6B', '#D2B48C', '#BDB76B',
-    // Forest
-    '#228B22', '#008000', '#3d4d2d',
-    // Snow
-    '#F5F5F5', '#DCDCDC', '#A9A9A9',
-    // Urban
-    '#696969', '#4a4a4a', '#363636',
-    // Accent
-    '#B31942', '#0A3161', '#CE1126',
+export const CUSTOMIZATION_COLORS: { nameKey: string; color: string; unlockedByDefault: boolean; achievementId?: string }[] = [
+    // Default Unlocked
+    { nameKey: 'colors.nato_green', color: '#556B2F', unlockedByDefault: true },
+    { nameKey: 'colors.nato_camo', color: '#6B8E23', unlockedByDefault: true },
+    { nameKey: 'colors.olive', color: '#808000', unlockedByDefault: true },
+    { nameKey: 'colors.desert_sand', color: '#C19A6B', unlockedByDefault: true },
+    { nameKey: 'colors.tan', color: '#D2B48C', unlockedByDefault: true },
+    { nameKey: 'colors.khaki', color: '#BDB76B', unlockedByDefault: true },
+    { nameKey: 'colors.forest_green', color: '#228B22', unlockedByDefault: true },
+    { nameKey: 'colors.dark_forest', color: '#3d4d2d', unlockedByDefault: true },
+
+    // Unlockables
+    { nameKey: 'colors.winter_white', color: '#F5F5F5', unlockedByDefault: false, achievementId: 'survivor_5m' },
+    { nameKey: 'colors.light_gray', color: '#DCDCDC', unlockedByDefault: false, achievementId: 'survivor_5m' },
+    { nameKey: 'colors.urban_gray', color: '#696969', unlockedByDefault: false, achievementId: 'urban_warrior' },
+    { nameKey: 'colors.dark_gray', color: '#4a4a4a', unlockedByDefault: false, achievementId: 'urban_warrior' },
+    { nameKey: 'colors.blood_red', color: '#B31942', unlockedByDefault: false, achievementId: 'centurion' },
+    { nameKey: 'colors.navy_blue', color: '#0A3161', unlockedByDefault: false, achievementId: 'high_scorer' },
+    { nameKey: 'colors.crimson', color: '#CE1126', unlockedByDefault: false, achievementId: 'boss_slayer' },
+    { nameKey: 'colors.charcoal', color: '#363636', unlockedByDefault: false, achievementId: 'mod_enthusiast' },
+];
+
+export const ACHIEVEMENTS: Achievement[] = [
+    {
+        id: 'first_blood',
+        titleKey: 'achievements.first_blood.title',
+        descKey: 'achievements.first_blood.desc',
+        isUnlocked: (stats: PlayerStats) => stats.gamesPlayed >= 1,
+    },
+    {
+        id: 'survivor_5m',
+        titleKey: 'achievements.survivor_5m.title',
+        descKey: 'achievements.survivor_5m.desc',
+        unlocks: { type: 'color', value: '#F5F5F5', name: 'Winter White' },
+        isUnlocked: (stats: PlayerStats) => stats.timePlayed >= 300,
+    },
+    {
+        id: 'centurion',
+        titleKey: 'achievements.centurion.title',
+        descKey: 'achievements.centurion.desc',
+        unlocks: { type: 'color', value: '#B31942', name: 'Blood Red' },
+        isUnlocked: (stats: PlayerStats) => stats.totalKills >= 1000,
+    },
+    {
+        id: 'high_scorer',
+        titleKey: 'achievements.high_scorer.title',
+        descKey: 'achievements.high_scorer.desc',
+        unlocks: { type: 'color', value: '#0A3161', name: 'Navy Blue' },
+        isUnlocked: (stats: PlayerStats) => stats.highScore >= 50000,
+    },
+    {
+        id: 'boss_slayer',
+        titleKey: 'achievements.boss_slayer.title',
+        descKey: 'achievements.boss_slayer.desc',
+        unlocks: { type: 'color', value: '#CE1126', name: 'Crimson' },
+        isUnlocked: (stats: PlayerStats) => stats.bossesDefeated >= 1,
+    },
+    {
+        id: 'mod_enthusiast',
+        titleKey: 'achievements.mod_enthusiast.title',
+        descKey: 'achievements.mod_enthusiast.desc',
+        unlocks: { type: 'color', value: '#363636', name: 'Charcoal' },
+        isUnlocked: (stats: PlayerStats) => stats.modsUsed.length > 0,
+    },
+    {
+        id: 'urban_warrior',
+        titleKey: 'achievements.urban_warrior.title',
+        descKey: 'achievements.urban_warrior.desc',
+        unlocks: { type: 'color', value: '#696969', name: 'Urban Gray' },
+        isUnlocked: (stats: PlayerStats) => stats.modsUsed.includes('urban_warfare'),
+    },
 ];

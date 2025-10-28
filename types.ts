@@ -80,9 +80,11 @@ export interface Tank extends GameObject {
     healthRegenTimer: number;
 
     // New enemy variant
-    variant?: 'default' | 'artillery' | 'spawner' | 'swarmer';
+    variant?: 'default' | 'artillery' | 'spawner' | 'swarmer' | 'medic' | 'sniper';
     // Spawner property
     spawnCooldown?: number;
+    // Medic property
+    healingAuraTimer?: number;
 
     // Motion blur for overdrive
     motionBlurTrail?: { x: number; y: number; life: number }[];
@@ -108,6 +110,7 @@ export interface Bullet extends GameObject {
     color: string;
     piercing?: boolean;
     trail?: {x: number, y: number}[];
+    isHealing?: boolean;
 }
 
 export interface Particle {
@@ -299,6 +302,16 @@ export interface CustomWeatherSettings {
     tone: string;
 }
 
+export interface SessionStats {
+    score: number;
+    time: number;
+    kills: number;
+    shotsFired: number;
+    shotsHit: number;
+    bossesDefeated: number;
+    highestKillStreak: number;
+}
+
 export interface GameState {
     status: GameStatus;
     player: Tank | null;
@@ -370,6 +383,8 @@ export interface GameState {
     isUrbanMode: boolean;
     buildings: Building[];
     rubble: Rubble[];
+    // Session stats for game over screen
+    sessionStats: SessionStats;
 }
 
 export interface UiState {
@@ -389,8 +404,8 @@ export interface UiState {
     killStreak: number;
     scoreMultiplier: number;
     allyCount: number;
+    sessionStats: SessionStats;
 }
-
 
 export interface Keys {
     w: boolean;
@@ -400,4 +415,22 @@ export interface Keys {
     ' ': boolean;
     q: boolean;
     e: boolean; // For Adrenaline Rush
+}
+
+// Achievements
+export interface PlayerStats {
+    totalKills: number;
+    highScore: number;
+    gamesPlayed: number;
+    timePlayed: number; // in seconds
+    bossesDefeated: number;
+    modsUsed: string[];
+}
+
+export interface Achievement {
+    id: string;
+    titleKey: string;
+    descKey: string;
+    unlocks?: { type: 'color', value: string, name: string };
+    isUnlocked: (stats: PlayerStats) => boolean;
 }

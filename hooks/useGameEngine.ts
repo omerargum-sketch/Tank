@@ -1,5 +1,7 @@
+
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { GameState, Keys, Tank, Bullet, Explosion, Country, GameEntity, PowerUp, MuzzleFlash, SmokeParticle, AbilityType, ExperienceOrb, KamikazeDrone, Mine, Upgrade, UpgradeType, TireTrackPoint, Particle, WeatherState, WeatherType, FloatingText, TankCustomization, ArtilleryTarget, MartyrsBeacon, SolarFlareWarning, BlackHole, ScorchMark, EMPBlast, Asteroid, CustomWeatherSettings, SpaceDebris, Building, Rubble, UiState } from '../types';
+import type { GameState, Keys, Tank, Bullet, Explosion, Country, GameEntity, PowerUp, MuzzleFlash, SmokeParticle, AbilityType, ExperienceOrb, KamikazeDrone, Mine, Upgrade, UpgradeType, TireTrackPoint, Particle, WeatherState, WeatherType, FloatingText, TankCustomization, ArtilleryTarget, MartyrsBeacon, SolarFlareWarning, BlackHole, ScorchMark, EMPBlast, Asteroid, CustomWeatherSettings, SpaceDebris, Building, Rubble, UiState, SessionStats } from '../types';
 import { GameStatus } from '../types';
 import { COUNTRIES, MS_PER_FRAME } from '../constants';
 import { TANK_DESIGNS, COUNTRY_TANK_MAP, ABILITY_MAP, createDesign, BOSS_DESIGN } from './tankDesigns';
@@ -73,7 +75,7 @@ const saveShields = (count: number) => {
     }
 }
 
-const createTank = (isPlayer: boolean, country: Country, canvasWidth: number, canvasHeight: number, isChampion: boolean = false, isElite: boolean = false, difficulty: number = 1, isHardMode: boolean = false, customization?: TankCustomization, isAlly: boolean = false, isBoss: boolean = false, variant: 'default' | 'artillery' | 'spawner' | 'swarmer' = 'default'): Tank => {
+const createTank = (isPlayer: boolean, country: Country, canvasWidth: number, canvasHeight: number, isChampion: boolean = false, isElite: boolean = false, difficulty: number = 1, isHardMode: boolean = false, customization?: TankCustomization, isAlly: boolean = false, isBoss: boolean = false, variant: 'default' | 'artillery' | 'spawner' | 'swarmer' | 'medic' | 'sniper' = 'default'): Tank => {
     const tankId = `tank_${Date.now()}_${Math.random()}`;
     let design;
     if (isBoss) {
@@ -94,6 +96,8 @@ const createTank = (isPlayer: boolean, country: Country, canvasWidth: number, ca
     else if (isElite) health = 250 + (difficulty * 10);
     else if (variant === 'spawner') health = 400 + difficulty * 20;
     else if (variant === 'swarmer') health = 20 + difficulty * 2;
+    else if (variant === 'medic') health = 200 + difficulty * 15;
+    else if (variant === 'sniper') health = 50 + difficulty * 5;
     else health = 100 + (difficulty * 5);
     
     if (variant === 'artillery') health *= 1.5;
@@ -103,8 +107,8 @@ const createTank = (isPlayer: boolean, country: Country, canvasWidth: number, ca
     if (abilityType === 'quick_repair') abilityCooldown = 1200; // 20s
     if (abilityType === 'overdrive') abilityCooldown = 2400; // 40s
 
-    const speed = isPlayer || isAlly ? 4.0 : isBoss ? 0.7 : (variant === 'artillery' ? 0.5 : (variant === 'spawner' ? 0.4 : (variant === 'swarmer' ? 2.8 : 1.4 + (difficulty / 15) + Math.random() * 0.4))) * (isHardMode ? 1.2 : 1);
-    const maxCooldown = isPlayer || isAlly ? 18 : isBoss ? 60 : (variant === 'artillery' ? 480 : (variant === 'spawner' ? 0 : (variant === 'swarmer' ? 120 : 70 - difficulty))) * (isHardMode ? 0.8 : 1);
+    const speed = isPlayer || isAlly ? 4.0 : isBoss ? 0.7 : (variant === 'artillery' ? 0.5 : (variant === 'spawner' ? 0.4 : (variant === 'swarmer' ? 2.8 : (variant === 'medic' ? 1.0 : (variant === 'sniper' ? 0.8 : 1.4 + (difficulty / 15) + Math.random() * 0.4))))) * (isHardMode ? 1.2 : 1);
+    const maxCooldown = isPlayer || isAlly ? 18 : isBoss ? 60 : (variant === 'artillery' ? 480 : (variant === 'spawner' ? 0 : (variant === 'swarmer' ? 120 : (variant === 'medic' ? 180 : (variant === 'sniper' ? 300 : 70 - difficulty))))) * (isHardMode ? 0.8 : 1);
 
     return {
         id: tankId,
@@ -136,7 +140,7 @@ const createTank = (isPlayer: boolean, country: Country, canvasWidth: number, ca
         abilityTimer: 0,
         level: 1,
         experience: 0,
-        damage: isPlayer ? 30 : isBoss ? 50 : (variant === 'artillery' ? 100 : (variant === 'swarmer' ? 5 : 18 + difficulty)),
+        damage: isPlayer ? 30 : isBoss ? 50 : (variant === 'artillery' ? 100 : (variant === 'swarmer' ? 5 : (variant === 'medic' ? 0 : (variant === 'sniper' ? 120 : 18 + difficulty)))),
         piercing: false,
         strafeDirection: Math.random() > 0.5 ? 1 : -1,
         spawnAnimProgress: 0,
@@ -146,6 +150,7 @@ const createTank = (isPlayer: boolean, country: Country, canvasWidth: number, ca
         isBoss,
         variant,
         spawnCooldown: variant === 'spawner' ? 300 : undefined,
+        healingAuraTimer: variant === 'medic' ? 60 : undefined,
         motionBlurTrail: isPlayer ? [] : undefined,
         isStunned: false,
         stunTimer: 0,
@@ -321,6 +326,16 @@ const createInitialState = (playerCountry: Country, canvasWidth: number, canvasH
     
     const spaceDebris: SpaceDebris[] = [];
 
+    const initialSessionStats: SessionStats = {
+        score: 0,
+        time: 0,
+        kills: 0,
+        shotsFired: 0,
+        shotsHit: 0,
+        bossesDefeated: 0,
+        highestKillStreak: 0,
+    };
+
     return {
         status: GameStatus.START,
         player,
@@ -382,6 +397,7 @@ const createInitialState = (playerCountry: Country, canvasWidth: number, canvasH
         isUrbanMode,
         buildings,
         rubble: [],
+        sessionStats: initialSessionStats,
     };
 };
 
@@ -402,6 +418,7 @@ const createInitialUiState = (gameState: GameState): UiState => ({
     killStreak: gameState.killStreak,
     scoreMultiplier: gameState.scoreMultiplier,
     allyCount: gameState.allies.length,
+    sessionStats: gameState.sessionStats,
 });
 
 
@@ -417,7 +434,6 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
 
     const gameModsRef = useRef<string[]>([]);
     
-    // FIX: Add comprehensive audio engine to handle sound effects and fix TS errors
     const audioUnlocked = useRef(false);
     const audioPools = useRef<{ [key: string]: { elements: HTMLAudioElement[], index: number } }>({});
     const ambientSounds = useRef<{ [key: string]: HTMLAudioElement }>({});
@@ -475,11 +491,12 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
         
         const pool = audioPools.current[sound];
         if (pool) {
+            if (pool.elements.length === 0) return;
+
             const audio = pool.elements[pool.index];
             if (audio.paused) {
                 audio.play().catch(e => console.error(`Sound ${sound} failed to play:`, e));
             } else {
-                // If it's not paused, clone it for overlap. This is a fallback.
                 const newAudio = audio.cloneNode() as HTMLAudioElement;
                 newAudio.play().catch(e => console.error(`Cloned sound ${sound} failed to play:`, e));
             }
@@ -499,7 +516,7 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
             fog: state.status === GameStatus.PLAYING && state.weather.type === 'fog',
         };
 
-        Object.entries(ambientSounds.current).forEach(([key, audio]) => {
+        Object.entries(ambientSounds.current).forEach(([key, audio]: [string, HTMLAudioElement]) => {
             if (shouldPlay[key]) {
                 if (audio.paused) {
                     audio.play().catch(e => console.error(`Ambient sound ${key} failed to start:`, e));
@@ -531,23 +548,23 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
             killStreak: state.killStreak,
             scoreMultiplier: state.scoreMultiplier,
             allyCount: state.allies.length,
+            sessionStats: state.sessionStats,
         });
     }, []);
 
     const startGame = useCallback((customization?: TankCustomization, mods: string[] = [], weatherSettings?: CustomWeatherSettings) => {
         if (!playerCountry) return;
 
-        // Unlock audio on first user interaction
         if (!audioUnlocked.current) {
-            Object.values(audioPools.current).forEach(pool => {
-                pool.elements.forEach(audio => {
+            Object.values(audioPools.current).forEach((pool: { elements: HTMLAudioElement[], index: number }) => {
+                pool.elements.forEach((audio: HTMLAudioElement) => {
                     const playPromise = audio.play();
                     if(playPromise !== undefined) {
                         playPromise.then(() => audio.pause()).catch(() => {});
                     }
                 });
             });
-             Object.values(ambientSounds.current).forEach(audio => {
+             Object.values(ambientSounds.current).forEach((audio: HTMLAudioElement) => {
                 const playPromise = audio.play();
                 if(playPromise !== undefined) {
                     playPromise.then(() => audio.pause()).catch(() => {});
@@ -890,6 +907,11 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                 state.shields -= 1;
                 saveShields(state.shields);
             } else {
+                state.sessionStats.score = state.score;
+                state.sessionStats.time = state.time;
+                state.sessionStats.highestKillStreak = Math.max(state.sessionStats.highestKillStreak, state.killStreak);
+                if(state.player.isBoss) state.sessionStats.bossesDefeated++;
+
                 saveHighScore(state.score, state.player.country);
                 const { explosion, scorchMark } = createExplosion(state.player.x + state.player.width / 2, state.player.y + state.player.height / 2, state.player.width * 2);
                 state.explosions.push(explosion);
@@ -989,6 +1011,7 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                 const target = allTargets.find(e => e.id === player.targetId);
                 if (target) {
                     player.fireCooldown = player.maxCooldown;
+                    state.sessionStats.shotsFired++;
                     const isGolden = player.abilityActive && player.abilityType === 'golden_bullet';
                     const dx = target.x + target.width / 2 - (player.x + player.width / 2);
                     const dy = target.y + target.height / 2 - (player.y + player.height / 2);
@@ -1347,11 +1370,25 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                 enemy.spawnAnimProgress = Math.min(1, enemy.spawnAnimProgress + (1.5 - enemy.spawnAnimProgress) * 0.03 * deltaTime);
             }
 
-            if (player) {
-                const dx = player.x - enemy.x;
-                const dy = player.y - enemy.y;
+            let targetPlayer: Tank | null = player;
+            if (state.allies.length > 0) {
+                 let closestTarget: Tank | null = player;
+                 let minDistance = player ? Math.hypot(player.x - enemy.x, player.y - enemy.y) : Infinity;
+                 state.allies.forEach(ally => {
+                     const dist = Math.hypot(ally.x - enemy.x, ally.y - enemy.y);
+                     if (dist < minDistance) {
+                         minDistance = dist;
+                         closestTarget = ally;
+                     }
+                 });
+                 targetPlayer = closestTarget;
+            }
+
+            if (targetPlayer) {
+                const dx = targetPlayer.x - enemy.x;
+                const dy = targetPlayer.y - enemy.y;
                 const dist = Math.hypot(dx, dy);
-                const safeDistance = enemy.variant === 'artillery' ? 400 : enemy.variant === 'swarmer' ? 0 : 150;
+                const safeDistance = enemy.variant === 'artillery' ? 400 : enemy.variant === 'swarmer' ? 0 : enemy.variant === 'sniper' ? 500 : 150;
                 
                 let enemyMoveSpeed = enemy.speed * deltaTime;
                 if(state.weather.type === 'snow') enemyMoveSpeed *= 0.8;
@@ -1361,7 +1398,7 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                     if (dist > safeDistance) {
                        moveX = (dx / dist) * enemyMoveSpeed;
                        moveY = (dy / dist) * enemyMoveSpeed;
-                    } else {
+                    } else if (enemy.variant !== 'medic') {
                         moveX = -(dx / dist) * enemyMoveSpeed * 0.5;
                         moveY = -(dy / dist) * enemyMoveSpeed * 0.5;
                         const perpDx = -dy / dist;
@@ -1389,7 +1426,7 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                 }
 
 
-                if (enemy.variant !== 'spawner') enemy.targetId = player.id;
+                if (enemy.variant !== 'spawner') enemy.targetId = targetPlayer.id;
             }
             
             if (enemy.spawnCooldown && enemy.spawnCooldown > 0) enemy.spawnCooldown -= deltaTime;
@@ -1403,19 +1440,39 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                 }
             }
 
+             if (enemy.variant === 'medic') {
+                enemy.healingAuraTimer = (enemy.healingAuraTimer || 0) - deltaTime;
+                if (enemy.healingAuraTimer <= 0) {
+                    enemy.healingAuraTimer = 180; // Heal every 3 seconds
+                    state.enemies.forEach(e => {
+                        if (e.id !== enemy.id) {
+                            const dist = Math.hypot(e.x - enemy.x, e.y - enemy.y);
+                            if (dist < 100 && e.health < e.maxHealth) {
+                                state.bullets.push({
+                                    id: `heal_bullet_${Date.now()}`, type: 'bullet',
+                                    x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height / 2,
+                                    width: 12, height: 12, vx: (e.x - enemy.x) / dist * 5, vy: (e.y - enemy.y) / dist * 5,
+                                    damage: 20, isPlayerBullet: false, color: '#00FF00', isHealing: true
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+
             if (enemy.fireCooldown > 0) enemy.fireCooldown -= deltaTime;
-            else if (player) {
+            else if (targetPlayer && enemy.variant !== 'medic') {
                 if (enemy.variant === 'artillery') {
                     enemy.fireCooldown = enemy.maxCooldown;
-                    state.artilleryTargets.push({ id: `at_${Date.now()}`, type: 'artillery_target', x: player.x + player.width/2, y: player.y + player.height/2, width: 0, height: 0, radius: 80, timer: 240, maxTimer: 240, state: 'sweeping' });
+                    state.artilleryTargets.push({ id: `at_${Date.now()}`, type: 'artillery_target', x: targetPlayer.x + targetPlayer.width/2, y: targetPlayer.y + targetPlayer.height/2, width: 0, height: 0, radius: 80, timer: 240, maxTimer: 240, state: 'sweeping' });
                 } else if (enemy.variant !== 'spawner') {
-                    const dx = player.x + player.width / 2 - (enemy.x + enemy.width / 2);
-                    const dy = player.y + player.height / 2 - (enemy.y + enemy.height / 2);
+                    const dx = targetPlayer.x + targetPlayer.width / 2 - (enemy.x + enemy.width / 2);
+                    const dy = targetPlayer.y + targetPlayer.height / 2 - (enemy.y + enemy.height / 2);
                     const dist = Math.hypot(dx, dy);
-                    const detectionRange = state.weather.type === 'fog' ? 200 : 500;
+                    const detectionRange = state.weather.type === 'fog' ? 200 : (enemy.variant === 'sniper' ? 700 : 500);
                     if (dist > 0 && dist < detectionRange) {
                         enemy.fireCooldown = enemy.maxCooldown;
-                        const bulletSpeed = enemy.variant === 'swarmer' ? 4 : 7;
+                        const bulletSpeed = enemy.variant === 'swarmer' ? 4 : (enemy.variant === 'sniper' ? 20 : 7);
                         let bulletVx = (dx / dist) * bulletSpeed;
                         let bulletVy = (dy / dist) * bulletSpeed;
                         let angle = Math.atan2(bulletVy, bulletVx);
@@ -1443,8 +1500,8 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
 
                         state.muzzleFlashes.push({
                             id: `mf_${Date.now()}`, type: 'muzzle_flash',
-                            x: enemy.x + enemy.width/2 + Math.cos(angle) * (enemy.width * 0.5),
-                            y: enemy.y + enemy.height/2 + Math.sin(angle) * (enemy.width * 0.5),
+                            x: enemy.x + enemy.width/2 + Math.cos(angle) * (enemy.width * (enemy.variant === 'sniper' ? 1.2 : 0.5)),
+                            y: enemy.y + enemy.height/2 + Math.sin(angle) * (enemy.width * (enemy.variant === 'sniper' ? 1.2 : 0.5)),
                             width: 30, height: 30,
                             life: 5, duration: 5,
                             angle: angle
@@ -1543,11 +1600,13 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                              }
                          }
                     } else {
-                        let variant: 'default' | 'artillery' | 'spawner' | 'swarmer' = 'default';
+                        let variant: Tank['variant'] = 'default';
                         const rand = Math.random();
-                        if (state.difficulty >= 8 && rand < 0.2) variant = 'spawner';
-                        else if (state.difficulty >= 4 && rand < 0.4) variant = 'artillery';
-                        else if (state.difficulty >= 2 && rand < 0.7) variant = 'swarmer';
+                        if (state.difficulty >= 10 && rand < 0.15) variant = 'medic';
+                        else if (state.difficulty >= 6 && rand < 0.3) variant = 'sniper';
+                        else if (state.difficulty >= 8 && rand < 0.5) variant = 'spawner';
+                        else if (state.difficulty >= 4 && rand < 0.7) variant = 'artillery';
+                        else if (state.difficulty >= 2 && rand < 0.9) variant = 'swarmer';
                         
                         state.enemies.push(createTank(false, randomCountry, canvasWidth, canvasHeight, isChampionRush, !isChampionRush && Math.random() < 0.1, state.difficulty, state.isHardMode, undefined, false, false, variant));
                     }
@@ -1623,6 +1682,7 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                         b.y < target.y + target.height && b.y + b.height > target.y) {
                         
                         target.health -= b.damage;
+                        state.sessionStats.shotsHit++;
                         
                         if (target.type === 'tank') {
                             target.damageFlashTimer = 10;
@@ -1646,6 +1706,7 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
 
                             if (target.type === 'tank') {
                                 state.killCount++;
+                                state.sessionStats.kills++;
                                 const scoreGain = (target.isChampion ? 500 : target.isElite ? 100 : 25) * state.scoreMultiplier * (target.isBoss ? 20 : 1);
                                 state.score += scoreGain;
                                 
@@ -1692,6 +1753,16 @@ export const useGameEngine = (playerCountry: Country | null, keys: React.Mutable
                             break; 
                         }
                     }
+                }
+            } else if (b.isHealing) {
+                const healTarget = state.enemies.find(e => {
+                    const dist = Math.hypot(e.x - b.x, e.y - b.y);
+                    return dist < e.width / 2;
+                });
+                if(healTarget) {
+                    healTarget.health = Math.min(healTarget.maxHealth, healTarget.health + b.damage);
+                    state.sparks.push(...createSparks(b.x, b.y, 3).map(s => ({...s, color: '#00FF00'})));
+                    bulletAlive = false;
                 }
             } else {
                 const targets: Tank[] = [...(player ? [player] : []), ...state.allies];
